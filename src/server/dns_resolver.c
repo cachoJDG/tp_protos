@@ -8,7 +8,7 @@
 #include <arpa/inet.h>    // INET6_ADDRSTRLEN
 #include <fcntl.h>        
 #include "../selector.h"  
-#include "logger.h"      
+#include "../shared/logger.h"      
 
 int dns_connect(const char *host, const char *service) {
     struct addrinfo hints, *res, *rp;

@@ -4,8 +4,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <string.h>
-#include "logger.h"
-#include "util.h"
+#include "../shared/logger.h"
+#include "../shared/util.h"
 #include "../selector.h"
 #include <signal.h>
 
