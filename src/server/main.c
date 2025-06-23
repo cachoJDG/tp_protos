@@ -6,12 +6,20 @@
 #include <string.h>
 #include "logger.h"
 #include "util.h"
+#include "../selector.h"
+#include <signal.h>
 
 #define MAXPENDING 5 // Maximum outstanding connection requests
 #define BUFSIZE 256
 #define MAX_ADDR_BUFFER 128
+#define SELECTOR_CAPACITY 256
 
 static char addrBuffer[MAX_ADDR_BUFFER];
+
+typedef struct ClientData {
+    char buffer[BUFSIZE];
+    ssize_t bytes;
+} ClientData;
 /*
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
  ** y crear el socket pasivo, para que escuche en cualquier IP, ya sea v4 o v6
@@ -85,65 +93,88 @@ int acceptTCPConnection(int servSock) {
 	return clntSock;
 }
 
-int handleTCPEchoClient(int clntSocket) {
-	char buffer[BUFSIZE]; // Buffer for echo string
-	// Receive message from client
-	ssize_t numBytesRcvd = recv(clntSocket, buffer, BUFSIZE, 0);
-	if (numBytesRcvd < 0) {
-		log(ERROR, "recv() failed");
-		return -1;   // TODO definir codigos de error
-	}
-
-	// Send received string and receive again until end of stream
-	while (numBytesRcvd > 0) { // 0 indicates end of stream
-		// Echo message back to client
-		ssize_t numBytesSent = send(clntSocket, buffer, numBytesRcvd, 0);
-		if (numBytesSent < 0) {
-			log(ERROR, "send() failed");
-			return -1;   // TODO definir codigos de error
-		}
-		else if (numBytesSent != numBytesRcvd) {
-			log(ERROR, "send() sent unexpected number of bytes ");
-			return -1;   // TODO definir codigos de error
-		}
-
-		// See if there is more data to receive
-		numBytesRcvd = recv(clntSocket, buffer, BUFSIZE, 0);
-		if (numBytesRcvd > 8) {
-			buffer[8] = '\n';
-			numBytesRcvd = 9;
-		}
-		if (numBytesRcvd < 0) {
-			log(ERROR, "recv() failed");
-			return -1;   // TODO definir codigos de error
-		}
-	}
-
-	close(clntSocket);
-	return 0;
+void client_handler_read(struct selector_key *key) {
+    puts("handling client read");
+    ClientData *clientData = key->data;
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
+    // printf("REAED!! '%s'\n", clientData->buffer);
+    fd_interest newInterests = OP_WRITE;
+    clientData->bytes = bytes;
+    // if (clientData->bufferLength < CLIENT_RECV_BUFFER_SIZE)
+    //     newInterests |= OP_READ;
+    selector_set_interest_key(key, newInterests);
 }
 
+void client_handler_write(struct selector_key *key) {
+    puts("handling client write");
+    ClientData *clientData = key->data;
+    // printf("WRRIIITE '%s'", clientData->buffer);
+    send(key->fd, clientData->buffer, clientData->bytes, 0);
+    selector_set_interest_key(key, OP_READ);
+}
+void client_handler_close(struct selector_key *key) {
+    puts("handling client close");
+}
+void handle_read_passive(struct selector_key *key) {
+    int clientSocket = acceptTCPConnection(key->fd);
+    fd_handler *clientHandler = malloc(sizeof(fd_handler)); // TODO free
+    clientHandler->handle_read = client_handler_read;
+    clientHandler->handle_write = client_handler_write;
+    clientHandler->handle_close = client_handler_close;
+    ClientData *clientData = calloc(1, sizeof(ClientData)); 
+    selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData);
+    // char buffer[BUFSIZE] = {0};
+    // puts("handle read!!");
+    // // ssize_t n = recv(key->fd, buffer, BUFSIZE, 0);
+    // ssize_t n = recv(clientSock, buffer, BUFSIZE, 0);
 
+    // if (n <= 0) {
+    //     // cierre o error
+    //     selector_unregister_fd(key->s, key->fd);
+    //     close(key->fd);
+    //     return;
+    // }
+    // send(clientSock, buffer, n, 0);
+}
 
 int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        log(FATAL, "usage: %s <Server Port>", argv[0]);
+    }
 
-	if (argc != 2) {
-		log(FATAL, "usage: %s <Server Port>", argv[0]);
-	}
+    // 1) Preparo el socket de escucha
+    int servSock = setupTCPServerSocket(argv[1]);
+    if (servSock < 0) return 1;
 
-	char * servPort = argv[1];
+    // 2) Pongo el socket en modo no-bloqueante
+    if (selector_fd_set_nio(servSock) < 0) {
+        log(FATAL, "Could not set O_NONBLOCK on listening socket");
+    }
 
-	int servSock = setupTCPServerSocket(servPort);
-	if (servSock < 0 )
-		return 1;
+    // 3) Inicializo el selector
+    const struct selector_init conf = {
+        .signal = SIGALRM,          // o la señal que prefieras para notifs
+        .select_timeout = { .tv_sec = 1, .tv_nsec = 0 }
+    };
+    selector_init(&conf);
+    fd_selector selector = selector_new(SELECTOR_CAPACITY);
 
-	while (1) { // Run forever
-		// Wait for a client to connect
-		int clntSock = acceptTCPConnection(servSock);
-		if (clntSock < 0)
-			log(ERROR, "accept() failed")
-		else {
-			handleTCPEchoClient(clntSock);
-		}
-	}
+    // 4) Registro el socket de escucha en el selector
+    //    Cuando haya OP_READ, invocará handle_listen()
+    static const fd_handler listen_handler = {
+        .handle_read  = handle_read_passive,   // en handle_read haces el accept()
+        .handle_write = NULL,
+        .handle_block = NULL,
+        .handle_close = NULL
+    };
+    selector_register(selector, servSock, &listen_handler, OP_WRITE | OP_READ, NULL);
+
+    // 5) Bucle principal: dejo que el selector gestione todos los eventos
+    while (selector_select(selector) == SELECTOR_SUCCESS) {
+        ; // selector_select internamente invoca tus callbacks
+    }
+
+    selector_destroy(selector);
+	selector_close();
+    return 0;
 }
