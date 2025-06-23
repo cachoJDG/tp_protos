@@ -57,8 +57,7 @@ wake_handler(const int signal) {
 struct selector_init conf;
 static sigset_t emptyset, blockset;
 
-selector_status
-selector_init(const struct selector_init  *c) {
+selector_status selector_init(const struct selector_init  *c) {
     memcpy(&conf, c, sizeof(conf));
 
     // inicializamos el sistema de comunicación entre threads y el selector
