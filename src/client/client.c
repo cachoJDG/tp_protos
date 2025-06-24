@@ -54,6 +54,7 @@ int tcpClientSocket(const char *host, const char *service) {
 }
 
 bool authClient(int clientSocket, char *clientName, char *clientPassword) {
+	// TODO: sacarle el null terminated a los strings, ya que no se envían al servidor
     char message[BUFSIZE] = { 0 }; // TODO: verificar que clientName y clientPassword no excedan. BUFFER OVERFLOW
     size_t index = 0;
     message[index++] = SOCK_VERSION;
@@ -105,7 +106,7 @@ int main(int argc, char *argv[]) {
 	if (clientSocket < 0) {
 		log(FATAL, "socket() failed")
 	}
-    bool authSuccess = authClient(clientSocket, "jhon", "doe");
+    bool authSuccess = authClient(clientSocket, "john", "doe");
     printf("Client[%d]: %d\n", clientSocket, authSuccess);
 	// size_t echoStringLen = strlen(echoString); // Determine input length
 

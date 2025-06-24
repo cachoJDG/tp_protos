@@ -8,6 +8,7 @@
 #include "../shared/util.h"
 #include "../selector.h"
 #include <signal.h>
+#include "map.h"
 
 #define MAXPENDING 5 // Maximum outstanding connection requests
 #define BUFSIZE 256
@@ -20,6 +21,8 @@ typedef struct ClientData {
     char buffer[BUFSIZE];
     ssize_t bytes;
 } ClientData;
+
+map hashmap = NULL; // Global hashmap to store user credentials
 /*
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
  ** y crear el socket pasivo, para que escuche en cualquier IP, ya sea v4 o v6
@@ -97,6 +100,48 @@ void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
     printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
+    int length = clientData->buffer[0];
+    
+    /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
+
+    // // TODO: Ver qué hacer con el null terminated
+    // char clientName[64] ;
+    // memcpy(&clientName, &clientData->buffer[1], clientData->buffer[0]);
+    // char clientPassword[64];
+    // int passwordLength = clientData->buffer[length + 1];
+    // memcpy(&clientPassword, &clientData->buffer[length + 2], passwordLength);
+    // clientName[length] = '\0'; // Null terminate the username
+    // clientPassword[passwordLength] = '\0'; // Null terminate the username
+
+    // printf("Username length: %d\n", length);
+    // printf("Username: %s\n", clientName);
+    // printf("Password length: %d\n", passwordLength);
+    // printf("Password: %s\n", clientPassword);
+
+    // printf("Map created with %d elements\n", map_size(hashmap));
+
+    // //printf("Password from map: %s\n", (char *) map_get(hashmap, "john"));
+
+    // if(map_contains(hashmap, clientName) == false) {
+    //     printf("User %s not found\n", clientName);
+    //     clientData->bytes = 0; // No response
+    //     selector_set_interest_key(key, OP_NOOP);
+    //     return;
+    // }
+    
+    // char *password = map_get(hashmap, clientName);
+
+    // if(strcmp(password, clientPassword) != 0) {
+    //     printf("Wrong password for user %s\n", clientName);
+    //     clientData->bytes = 0; // No response
+    //     selector_set_interest_key(key, OP_NOOP);
+    //     return;
+    // }
+
+    // printf("User %s authenticated successfully\n", clientName);
+
+    /// ----- End Auth
+
     fd_interest newInterests = OP_WRITE;
     clientData->bytes = bytes;
     if (clientData->bytes < BUFSIZ)
@@ -140,6 +185,15 @@ void handle_read_passive(struct selector_key *key) {
 }
 
 int main(int argc, char *argv[]) {
+
+    hashmap = map_create();
+    map_set(hashmap, "john", "doe");
+    map_set(hashmap, "alex", "1234");
+    if(map_contains(hashmap, "john") == true) {
+        printf("User john is in the map\n");
+    }
+    printf("Map created with %d elements\n", map_size(hashmap));
+
     if (argc != 2) {
         log(FATAL, "usage: %s <Server Port>", argv[0]);
     }
