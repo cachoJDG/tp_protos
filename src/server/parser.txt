@@ -1,0 +1,111 @@
+
+// Estados del parser
+enum login_states {
+    login_version = 0,
+    login_user_len,
+    login_user,
+    login_pass_len,
+    login_pass,
+    login_done
+};
+
+// Acciones del parser
+void act_login_version(struct parser_event *ret, const uint8_t c) {
+    // Acumula la versión del protocolo
+    // Aquí se espera un solo byte que representa la versión del protocolo
+    if (ret->n < sizeof(ret->data)) {
+        ret->data[ret->n++] = c;
+    }
+    ret->type = login_version;
+}
+
+void act_user(struct parser_event *ret, const uint8_t c) {
+    // Acumula caracteres del usuario
+    if (ret->n < sizeof(ret->data)) {
+        ret->data[ret->n++] = c;
+    }
+    ret->type = login_user;
+}
+
+void act_pass(struct parser_event *ret, const uint8_t c) {
+    // Acumula caracteres de la contraseña
+    if (ret->n < sizeof(ret->data)) {
+        ret->data[ret->n++] = c;
+    }
+    ret->type = login_pass;
+}
+
+void act_done(struct parser_event *ret, const uint8_t c) {
+    ret->type = login_done;
+}
+
+void act_login_user_len(struct parser_event *ret, const uint8_t c) {
+    // Acumula la longitud del usuario
+    if (ret->n < sizeof(ret->data)) {
+        ret->data[ret->n++] = c;
+    }
+    ret->type = login_user_len;
+}
+
+void act_login_pass_len(struct parser_event *ret, const uint8_t c) {
+    // Acumula la longitud de la contraseña
+    if (ret->n < sizeof(ret->data)) {
+        ret->data[ret->n++] = c;
+    }
+    ret->type = login_pass_len;
+}
+
+
+
+// Transiciones del parser
+static const struct parser_state_transition login_transitions[] = {
+    // Estado 0: Espera versión
+    { 5, login_version, act_login_version, NULL },
+
+    // Estado 1: Espera longitud del username
+    { ANY, login_user_len, act_login_user_len, NULL },
+
+
+    // Estado 2: Espera caracteres del username (hasta la longitud del Estado 1)
+    { ANY, login_user, act_login_user, NULL },
+
+    // Estado 3: Espera longitud de la contraseña
+    { ANY, login_pass_len, act_login_pass_len, NULL },
+
+    // Estado 4: Espera caracteres de la contraseña (hasta la longitud del Estado 3)
+    { ANY, login_pass, act_login_pass, NULL },
+};
+
+// Cantidad de transiciones por estado
+static const size_t login_transitions_n[] = {
+    1, // login_version
+    1, // login_user_len
+    1, // login_user
+    1, // login_pass_len
+    1, // login_pass
+    1  // login_done
+};
+
+// Array de punteros a transiciones por estado
+static const struct parser_state_transition *login_states_array[] = {
+    login_transitions,
+    login_transitions + 1,
+    login_transitions + 2,
+    login_transitions + 3,
+    login_transitions + 4,
+    NULL
+};
+
+// Definición del parser
+static const struct parser_definition login_parser_def = {
+    .states_count = 6,
+    .states = login_states_array,
+    .states_n = login_transitions_n,
+    .start_state = login_start,
+};
+
+// ...existing code...
+
+// Inicialización del parser
+const unsigned *classes = parser_no_classes();
+struct parser *login_parser = parser_init(classes, &login_parser_def);

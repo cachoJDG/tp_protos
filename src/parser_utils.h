@@ -22,7 +22,7 @@ parser_utils_strcmpi_event(const enum string_cmp_event_types type);
 
 
 /*
- * Crea un parser que verifica que los caracteres recibidos forment el texto
+ * Crea un parser que verifica que los caracteres recibidos formen el texto
  * descripto por `s'.
  *
  * Si se recibe el evento `STRING_CMP_NEQ' el texto entrado no matchea.

@@ -34,7 +34,8 @@ struct state_machine {
     const struct state_definition *current;
 };
 
-struct selector_key *key;
+// struct selector_key *key;
+// TODO: Descomentar si se rompe todo
 
 /**
  * definición de un estado de la máquina de estados

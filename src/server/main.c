@@ -7,8 +7,10 @@
 #include "../shared/logger.h"
 #include "../shared/util.h"
 #include "../selector.h"
+#include "../parser.h"
 #include <signal.h>
 #include "map.h"
+#include "../stm.h"
 
 #define MAXPENDING 5 // Maximum outstanding connection requests
 #define BUFSIZE 256
@@ -20,6 +22,7 @@ static char addrBuffer[MAX_ADDR_BUFFER];
 typedef struct ClientData {
     char buffer[BUFSIZE];
     ssize_t bytes;
+    struct state_machine stm; // Pointer to the state machine for this client
 } ClientData;
 
 map hashmap = NULL; // Global hashmap to store user credentials
@@ -100,45 +103,35 @@ void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
     printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
-    int length = clientData->buffer[0];
+    int usernameLength = clientData->buffer[1];
     
     /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
 
-    // // TODO: Ver qué hacer con el null terminated
-    // char clientName[64] ;
-    // memcpy(&clientName, &clientData->buffer[1], clientData->buffer[0]);
-    // char clientPassword[64];
-    // int passwordLength = clientData->buffer[length + 1];
-    // memcpy(&clientPassword, &clientData->buffer[length + 2], passwordLength);
-    // clientName[length] = '\0'; // Null terminate the username
-    // clientPassword[passwordLength] = '\0'; // Null terminate the username
+    // TODO: Ver qué hacer con el null terminated
+    char clientName[64] ;
+    memcpy(clientName, &clientData->buffer[2], usernameLength);
+    clientName[usernameLength] = '\0'; // Null terminate the username
 
-    // printf("Username length: %d\n", length);
-    // printf("Username: %s\n", clientName);
-    // printf("Password length: %d\n", passwordLength);
-    // printf("Password: %s\n", clientPassword);
+    int passwordLength = clientData->buffer[usernameLength + 2];
 
-    // printf("Map created with %d elements\n", map_size(hashmap));
+    char clientPassword[64];
+    memcpy(clientPassword, &clientData->buffer[usernameLength + 3], passwordLength);
+    clientPassword[passwordLength] = '\0'; // Null terminate the username
 
-    // //printf("Password from map: %s\n", (char *) map_get(hashmap, "john"));
+    printf("Username length: %d\n", usernameLength);
+    printf("Username: %s\n", clientName);
+    printf("Password length: %d\n", passwordLength);
+    printf("Password: %s\n", clientPassword);
 
-    // if(map_contains(hashmap, clientName) == false) {
-    //     printf("User %s not found\n", clientName);
-    //     clientData->bytes = 0; // No response
-    //     selector_set_interest_key(key, OP_NOOP);
-    //     return;
-    // }
-    
-    // char *password = map_get(hashmap, clientName);
 
-    // if(strcmp(password, clientPassword) != 0) {
-    //     printf("Wrong password for user %s\n", clientName);
-    //     clientData->bytes = 0; // No response
-    //     selector_set_interest_key(key, OP_NOOP);
-    //     return;
-    // }
+    if(map_contains(hashmap, clientName) == false) {
+        printf("User %s not found\n", clientName);
+        clientData->bytes = 0; // No response
+        selector_set_interest_key(key, OP_NOOP);
+        return;
+    }
 
-    // printf("User %s authenticated successfully\n", clientName);
+    printf("User %s authenticated successfully\n", clientName);
 
     /// ----- End Auth
 
@@ -225,6 +218,44 @@ int main(int argc, char *argv[]) {
     };
     selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
 
+    // START STM
+
+    // typedef enum StateEnum {
+    //     STATE_INITIAL = 0,
+    //     STATE_LOGIN,
+    //     STATE_CONNECTION,
+    //     // Otros estados a definir según la lógica de tu aplicación
+    // } StateEnum;
+
+    // struct state_definition states[] = {
+    //     {
+    //         .state = STATE_INITIAL, // Estado inicial
+    //         .on_arrival = NULL, // A definir más adelante
+    //         .on_departure = NULL, // A definir más adelante
+    //         .on_read_ready = client_handler_read,
+    //         .on_write_ready = client_handler_write,
+    //         .on_block_ready = NULL // A definir más adelante
+    //     },
+    //     // Otros estados a definir según la lógica de tu aplicación
+    // };
+    
+    // unsigned max_state = sizeof(states) / sizeof(states[0]) - 1; // Último índice
+
+    // struct state_machine *stm = {
+    //     .initial = STATE_INITIAL, // Estado inicial
+    //     .states = states, 
+    //     .max_state = max_state, // A definir más adelante
+    //     .current = NULL // A definir más adelante
+    // };
+
+    // stm_init(stm);
+
+    // unsigned currentState = stm_state(stm);
+    // printf("Estado inicial: %u\n", currentState);
+
+
+    // END STM
+
     // 5) Bucle principal: dejo que el selector gestione todos los eventos
     while (selector_select(selector) == SELECTOR_SUCCESS) {
         ; // selector_select internamente invoca tus callbacks
@@ -234,3 +265,48 @@ int main(int argc, char *argv[]) {
 	selector_close();
     return 0;
 }
+
+// unsigned stm_state_initial_handler(struct selector_key* key) {
+//     ClientData *clientData = key->data;
+//     // ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
+//     // printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
+//     int usernameLength = clientData->buffer[1];
+    
+//     /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
+
+//     // TODO: Ver qué hacer con el null terminated
+//     char clientName[64] ;
+//     memcpy(clientName, &clientData->buffer[2], usernameLength);
+//     clientName[usernameLength] = '\0'; // Null terminate the username
+
+//     int passwordLength = clientData->buffer[usernameLength + 2];
+
+//     char clientPassword[64];
+//     memcpy(clientPassword, &clientData->buffer[usernameLength + 3], passwordLength);
+//     clientPassword[passwordLength] = '\0'; // Null terminate the username
+
+//     printf("Username length: %d\n", usernameLength);
+//     printf("Username: %s\n", clientName);
+//     printf("Password length: %d\n", passwordLength);
+//     printf("Password: %s\n", clientPassword);
+
+
+//     if(map_contains(hashmap, clientName) == false) {
+//         printf("User %s not found\n", clientName);
+//         clientData->bytes = 0; // No response
+//         selector_set_interest_key(key, OP_NOOP);
+//         return;
+//     }
+
+//     printf("User %s authenticated successfully\n", clientName);
+
+//     /// ----- End Auth
+
+//     fd_interest newInterests = OP_WRITE;
+//     clientData->bytes = bytes;
+//     if (clientData->bytes < BUFSIZ)
+//         newInterests |= OP_READ;
+//     if(clientData->bytes == 0)
+//         newInterests = OP_NOOP;
+//     selector_set_interest_key(key, newInterests);
+// }

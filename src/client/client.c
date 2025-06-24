@@ -64,7 +64,7 @@ bool authClient(int clientSocket, char *clientName, char *clientPassword) {
     memcpy(&message[index], clientName, clientNameLength);
     index += clientNameLength;
 
-    size_t clientPasswordLength = strlen(clientName);
+    size_t clientPasswordLength = strlen(clientPassword);
     message[index++] = clientPasswordLength;
     memcpy(&message[index], clientPassword, clientPasswordLength);
     index += clientPasswordLength;
