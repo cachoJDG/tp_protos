@@ -1,3 +1,5 @@
+#include "selector.h"
+
 #ifndef STM_H_wL7YxN65ZHqKGvCPrNbPtMJgL8B
 #define STM_H_wL7YxN65ZHqKGvCPrNbPtMJgL8B
 
@@ -34,8 +36,6 @@ struct state_machine {
     const struct state_definition *current;
 };
 
-// struct selector_key *key;
-// TODO: Descomentar si se rompe todo
 
 /**
  * definición de un estado de la máquina de estados
