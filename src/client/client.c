@@ -10,11 +10,14 @@
 #include <stdlib.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
 
 #define MAX_ADDR_BUFFER 128
+#define BUFSIZE 512
+#define SOCK_VERSION 5
 
 int tcpClientSocket(const char *host, const char *service) {
-	char addrBuffer[MAX_ADDR_BUFFER];
+	char addrBuffer[MAX_ADDR_BUFFER] = {0};
 	struct addrinfo addrCriteria;                   // Criteria for address match
 	memset(&addrCriteria, 0, sizeof(addrCriteria)); // Zero out structure
 	addrCriteria.ai_family = AF_UNSPEC;             // v4 or v6 is OK
@@ -36,7 +39,7 @@ int tcpClientSocket(const char *host, const char *service) {
 		if (sock >= 0) {
 			errno = 0;
 			// Establish the connection to the server
-			if ( connect(sock, addr->ai_addr, addr->ai_addrlen) != 0) {
+			if (connect(sock, addr->ai_addr, addr->ai_addrlen) != 0) {
 				log(INFO, "can't connectto %s: %s", printAddressPort(addr, addrBuffer), strerror(errno))
 				close(sock); 	// Socket connection failed; try next address
 				sock = -1;
@@ -50,10 +53,41 @@ int tcpClientSocket(const char *host, const char *service) {
 	return sock;
 }
 
+bool authClient(int clientSocket, char *clientName, char *clientPassword) {
+    char message[BUFSIZE] = { 0 }; // TODO: verificar que clientName y clientPassword no excedan. BUFFER OVERFLOW
+    size_t index = 0;
+    message[index++] = SOCK_VERSION;
 
+    size_t clientNameLength = strlen(clientName);
+    message[index++] = clientNameLength;
+    memcpy(&message[index], clientName, clientNameLength);
+    index += clientNameLength;
 
+    size_t clientPasswordLength = strlen(clientName);
+    message[index++] = clientPasswordLength;
+    memcpy(&message[index], clientPassword, clientPasswordLength);
+    index += clientPasswordLength;
 
-#define BUFSIZE 512
+    if(send(clientSocket, message, index, 0) <= ERROR_VALUE) {
+        fprintf(stderr, "Client error in first message");
+
+        return false;
+    }
+
+    if(read(clientSocket, message, 2) < 1) {
+        fprintf(stderr, "Client error");
+
+        return false;
+    }
+
+    if(message[1] == 0) {
+        fprintf(stderr, "Client error: incorrect password");
+
+        return false;
+    }
+
+    return true;
+}
 
 int main(int argc, char *argv[]) {
 
@@ -62,43 +96,43 @@ int main(int argc, char *argv[]) {
 	}
 
 	char *server = argv[1];     // First arg: server name IP address 
-	char *echoString = argv[2]; // Second arg: string to echo
 
 	// Third arg server port
-	char * port = argv[3];
+	char * port = argv[2];
 
 	// Create a reliable, stream socket using TCP
-	int sock = tcpClientSocket(server, port);
-	if (sock < 0) {
+	int clientSocket = tcpClientSocket(server, port);
+	if (clientSocket < 0) {
 		log(FATAL, "socket() failed")
 	}
+    bool authSuccess = authClient(clientSocket, "jhon", "doe");
+    printf("Client[%d]: %d\n", clientSocket, authSuccess);
+	// size_t echoStringLen = strlen(echoString); // Determine input length
 
-	size_t echoStringLen = strlen(echoString); // Determine input length
+	// // Send the string to the server
+	// ssize_t numBytes = send(sock, echoString, echoStringLen, 0);
+	// if (numBytes < 0 || numBytes != echoStringLen)
+	// 	log(FATAL, "send() failed expected %zu sent %zu", echoStringLen, numBytes);
 
-	// Send the string to the server
-	ssize_t numBytes = send(sock, echoString, echoStringLen, 0);
-	if (numBytes < 0 || numBytes != echoStringLen)
-		log(FATAL, "send() failed expected %zu sent %zu", echoStringLen, numBytes);
+	// // Receive the same string back from the server
+	// unsigned int totalBytesRcvd = 0; // Count of total bytes received
+	// log(INFO, "Received: ")     // Setup to print the echoed string
+	// while (totalBytesRcvd < echoStringLen && numBytes >=0) {
+	// 	char buffer[BUFSIZE]; 
+	// 	/* Receive up to the buffer size (minus 1 to leave space for a null terminator) bytes from the sender */
+	// 	numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
+	// 	if (numBytes < 0) {
+	// 		log(ERROR, "recv() failed")
+	// 	}  
+	// 	else if (numBytes == 0)
+	// 		log(ERROR, "recv() connection closed prematurely")
+	// 	else {
+	// 		totalBytesRcvd += numBytes; // Keep tally of total bytes
+	// 		buffer[numBytes] = '\0';    // Terminate the string!
+	// 		log(INFO, "%s", buffer);      // Print the echo buffer
+	// 	}
+	// }
 
-	// Receive the same string back from the server
-	unsigned int totalBytesRcvd = 0; // Count of total bytes received
-	log(INFO, "Received: ")     // Setup to print the echoed string
-	while (totalBytesRcvd < echoStringLen && numBytes >=0) {
-		char buffer[BUFSIZE]; 
-		/* Receive up to the buffer size (minus 1 to leave space for a null terminator) bytes from the sender */
-		numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
-		if (numBytes < 0) {
-			log(ERROR, "recv() failed")
-		}  
-		else if (numBytes == 0)
-			log(ERROR, "recv() connection closed prematurely")
-		else {
-			totalBytesRcvd += numBytes; // Keep tally of total bytes
-			buffer[numBytes] = '\0';    // Terminate the string!
-			log(INFO, "%s", buffer);      // Print the echo buffer
-		}
-	}
-
-	close(sock);
+	close(clientSocket);
 	return 0;
 }

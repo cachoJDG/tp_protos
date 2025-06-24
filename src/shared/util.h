@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <sys/socket.h>
 
+#define ERROR_VALUE (-1)
 
 int printSocketAddress(const struct sockaddr *address, char * addrBuffer);
 

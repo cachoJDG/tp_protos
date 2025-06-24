@@ -94,26 +94,28 @@ int acceptTCPConnection(int servSock) {
 }
 
 void client_handler_read(struct selector_key *key) {
-    puts("handling client read");
     ClientData *clientData = key->data;
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
-    // printf("REAED!! '%s'\n", clientData->buffer);
+    printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
     fd_interest newInterests = OP_WRITE;
     clientData->bytes = bytes;
-    // if (clientData->bufferLength < CLIENT_RECV_BUFFER_SIZE)
-    //     newInterests |= OP_READ;
+    if (clientData->bytes < BUFSIZ)
+        newInterests |= OP_READ;
+    if(clientData->bytes == 0)
+        newInterests = OP_NOOP;
     selector_set_interest_key(key, newInterests);
 }
 
 void client_handler_write(struct selector_key *key) {
-    puts("handling client write");
     ClientData *clientData = key->data;
-    // printf("WRRIIITE '%s'", clientData->buffer);
+    printf("CLIENT_WRITE[%d]='%s'\n", key->fd, clientData->buffer);
     send(key->fd, clientData->buffer, clientData->bytes, 0);
     selector_set_interest_key(key, OP_READ);
 }
 void client_handler_close(struct selector_key *key) {
     puts("handling client close");
+    free(key->data);
+    selector_set_interest_key(key, OP_NOOP);
 }
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
@@ -167,7 +169,7 @@ int main(int argc, char *argv[]) {
         .handle_block = NULL,
         .handle_close = NULL
     };
-    selector_register(selector, servSock, &listen_handler, OP_WRITE | OP_READ, NULL);
+    selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
 
     // 5) Bucle principal: dejo que el selector gestione todos los eventos
     while (selector_select(selector) == SELECTOR_SUCCESS) {
