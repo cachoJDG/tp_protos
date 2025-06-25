@@ -14,3 +14,10 @@ char * levelDescription(LOG_LEVEL level) {
         return "";
     return description[level];
 }
+
+void print_hex(const unsigned char *buffer, size_t length) {
+    for (size_t i = 0; i < length; i++) {
+        printf("%02x ", buffer[i]);
+    }
+    printf("\n");
+}

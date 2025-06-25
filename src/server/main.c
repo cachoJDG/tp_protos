@@ -24,7 +24,7 @@ typedef struct ClientData {
     ssize_t bytes;
     struct state_machine stm; // Pointer to the state machine for this client
 } ClientData;
-
+struct sockaddr_storage _localAddr; // TODO: VARIABLE GLOBAL!!!!!
 map hashmap = NULL; // Global hashmap to store user credentials
 /*
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
@@ -66,6 +66,7 @@ int setupTCPServerSocket(const char *service) {
 			socklen_t addrSize = sizeof(localAddr);
 			if (getsockname(servSock, (struct sockaddr *) &localAddr, &addrSize) >= 0) {
 				printSocketAddress((struct sockaddr *) &localAddr, addrBuffer);
+                _localAddr = localAddr;
 				log(INFO, "Binding to %s", addrBuffer);
 			}
 		} else {
@@ -101,37 +102,116 @@ int acceptTCPConnection(int servSock) {
 
 void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
+
+    //
+    memset(clientData->buffer, 0, BUFSIZE);
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
     printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
-    int usernameLength = clientData->buffer[1];
+    print_hex(clientData->buffer, bytes);
+    int index = 0;
+    int version = clientData->buffer[index++];
+    int methodCount = clientData->buffer[index++];
+    printf("version=%d methodCount=%d [", version, methodCount);
+    for(int i = 0; i < methodCount; i++) {
+        printf("%d, ", clientData->buffer[index++]);
+    }
+    puts("]");
+
+    //
+    char message[BUFSIZE] = {0};
+    message[0] = version;
+    message[1] = 2;
+    bytes = send(key->fd, message, 2, 0);
+
+    memset(clientData->buffer, 0, BUFSIZE);
+    bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    index = 1;
+    int usernameLen = clientData->buffer[index++];
+    memcpy(message, &clientData->buffer[index], usernameLen);
+    message[usernameLen] = '\0';
+    printf("username[%d]: '%s'\n", usernameLen, message);
+    index += usernameLen;
+    int passwordLen = clientData->buffer[index++];
+    memcpy(message, &clientData->buffer[index], passwordLen);
+    message[passwordLen] = '\0';
+    printf("password[%d]: '%s'\n", passwordLen, message);
+    
+    //
+    message[0] = version;
+    message[1] = 0x00; // LOGIN_SUCCESS
+    bytes = send(key->fd, message, 2, 0);
+
+    //
+    memset(clientData->buffer, 0, BUFSIZE);
+    printf("after log: ");
+    bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    print_hex(clientData->buffer, bytes);
+    index = 1;
+    int cmd = clientData->buffer[index++];
+    /* cmd
+    CONNECT = 0x01,
+    BIND = 0x02,
+    UDP_ASSOCIATE = 0x03,
+    */
+    int reserved = clientData->buffer[index++]; // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
+    int addressType = clientData->buffer[index++]; 
+    /* addressType
+    ADDRESS_TYPE_IPV4 = 0x01, // LEER 4 BYTES
+    ADDRESS_TYPE_DOMAIN_NAME = 0x03, // LEER N BYTES
+    ADDRESS_TYPE_IPV6 = 0x04, // LEER 
+    */
+    index += 4; // asume ipv4
+    print_hex(&clientData->buffer[index], 2);
+    uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
+    index += 2;
+    printf("cmd=%d addressType=%d destinationAdress= destinationPort=%u\n", cmd, addressType, destinationPort);
+
+    //
+    struct sockaddr_in *local = (struct sockaddr_in*) &_localAddr;
+    index = 0;
+    message[index++] = version;
+    message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
+    message[index++] = 0x00; // RESERVED debe valer 0x00
+    message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
+    memcpy(&message[index], &local->sin_addr, 4);
+    index += 4;
+    memcpy(&message[index], &local->sin_port, 2);
+    index += 2;
+    bytes = send(key->fd, message, index, 0);
+
+    //
+    bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    print_hex(clientData->buffer, bytes);
+    exit(0);
     
     /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
+    // int usernameLength = clientData->buffer[1];
 
     // TODO: Ver qué hacer con el null terminated
-    char clientName[64] ;
-    memcpy(clientName, &clientData->buffer[2], usernameLength);
-    clientName[usernameLength] = '\0'; // Null terminate the username
+    // char clientName[64] ;
+    // memcpy(clientName, &clientData->buffer[2], usernameLength);
+    // clientName[usernameLength] = '\0'; // Null terminate the username
 
-    int passwordLength = clientData->buffer[usernameLength + 2];
+    // int passwordLength = clientData->buffer[usernameLength + 2];
 
-    char clientPassword[64];
-    memcpy(clientPassword, &clientData->buffer[usernameLength + 3], passwordLength);
-    clientPassword[passwordLength] = '\0'; // Null terminate the username
+    // char clientPassword[64];
+    // memcpy(clientPassword, &clientData->buffer[usernameLength + 3], passwordLength);
+    // clientPassword[passwordLength] = '\0'; // Null terminate the username
 
-    printf("Username length: %d\n", usernameLength);
-    printf("Username: %s\n", clientName);
-    printf("Password length: %d\n", passwordLength);
-    printf("Password: %s\n", clientPassword);
+    // printf("Username length: %d\n", usernameLength);
+    // printf("Username: %s\n", clientName);
+    // printf("Password length: %d\n", passwordLength);
+    // printf("Password: %s\n", clientPassword);
 
 
-    if(map_contains(hashmap, clientName) == false) {
-        printf("User %s not found\n", clientName);
-        clientData->bytes = 0; // No response
-        selector_set_interest_key(key, OP_NOOP);
-        return;
-    }
+    // if(map_contains(hashmap, clientName) == false) {
+    //     printf("User %s not found\n", clientName);
+    //     clientData->bytes = 0; // No response
+    //     selector_set_interest_key(key, OP_NOOP);
+    //     return;
+    // }
 
-    printf("User %s authenticated successfully\n", clientName);
+    // printf("User %s authenticated successfully\n", clientName);
 
     /// ----- End Auth
 
