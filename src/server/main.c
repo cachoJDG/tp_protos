@@ -26,6 +26,207 @@ typedef struct ClientData {
 } ClientData;
 struct sockaddr_storage _localAddr; // TODO: VARIABLE GLOBAL!!!!!
 map hashmap = NULL; // Global hashmap to store user credentials
+void client_handler_read(struct selector_key *key);
+void client_handler_close(struct selector_key *key);
+
+enum StateSocksv5 {
+    STM_INITIAL_READ,
+    STM_INITIAL_WRITE,
+    STM_LOGIN_READ,
+    STM_LOGIN_WRITE,
+    STM_REQUEST_READ,
+    STM_REQUEST_WRITE,
+    STM_REQUEST_CONNECT,
+    STM_REQUEST_DNS,
+    STM_ERROR, // DEBE SER EL ULTIMO
+};
+
+void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
+    ClientData *clientData = key->data;
+    memset(clientData->buffer, 0, sizeof(clientData->buffer));
+}
+
+enum StateSocksv5 stm_initial_read(struct selector_key *key) {
+    ClientData *clientData = key->data; // TODO: validar si nos mandaron menos. ahora crashearia 
+
+    ssize_t bytesRead = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    if(bytesRead <= 0) {
+        return STM_ERROR;
+    }
+
+    print_hex(clientData->buffer, bytesRead);
+    int index = 0;
+    int version = clientData->buffer[index++];
+    int methodCount = clientData->buffer[index++];
+    printf("version=%d methodCount=%d [", version, methodCount);
+    for(int i = 0; i < methodCount; i++) {
+        printf("%d, ", clientData->buffer[index++]);
+    }
+    puts("]");
+
+    selector_set_interest_key(key, OP_WRITE); 
+
+    return STM_INITIAL_WRITE;
+}
+
+enum StateSocksv5 stm_initial_write(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    
+    char message[BUFSIZE] = {0};
+    message[0] = SOCKS_PROTOCOL_VERSION;
+    message[1] = 0x02; // LOGIN
+    ssize_t bytes = send(key->fd, message, 2, 0);
+    selector_set_interest_key(key, OP_READ); 
+    return STM_LOGIN_READ;
+
+    // TODO: este es el caso de que el cliente haya seleccionado METHOD=NONE=0x00
+    // return STM_REQUEST_READ;
+}
+
+void stm_login_read_arrival(unsigned state, struct selector_key *key) {
+    ClientData *clientData = key->data;
+    memset(clientData->buffer, 0, BUFSIZE);
+}
+
+enum StateSocksv5 stm_login_read(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    char message[BUFSIZE] = {0};
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    print_hex(clientData->buffer, bytes);
+    int index = 1;
+    int usernameLen = clientData->buffer[index++];
+    memcpy(message, &clientData->buffer[index], usernameLen);
+    message[usernameLen] = '\0';
+    printf("username[%d]: '%s'\n", usernameLen, message);
+    index += usernameLen;
+    int passwordLen = clientData->buffer[index++];
+    memcpy(message, &clientData->buffer[index], passwordLen);
+    message[passwordLen] = '\0';
+    printf("password[%d]: '%s'\n", passwordLen, message);
+
+    selector_set_interest_key(key, OP_WRITE); 
+    return STM_LOGIN_WRITE;
+}
+
+enum StateSocksv5 stm_login_write(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    
+    char message[2];
+    message[0] = SOCKS_PROTOCOL_VERSION;
+    message[1] = 0x00; // LOGIN_SUCCESS
+    ssize_t bytes = send(key->fd, message, 2, 0);
+
+    selector_set_interest_key(key, OP_READ); 
+    return STM_REQUEST_READ;
+}
+
+void stm_request_read_arrival(unsigned state, struct selector_key *key) {
+    ClientData *clientData = key->data;
+    memset(clientData->buffer, 0, BUFSIZE);
+}
+
+enum StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca tiene MUCHA funcionalidad por hacer.
+    ClientData *clientData = key->data;
+
+    printf("after log: ");
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    print_hex(clientData->buffer, bytes);
+    int index = 1;
+    int cmd = clientData->buffer[index++];
+    //  cmd ENUM
+    // CONNECT = 0x01,
+    // BIND = 0x02,
+    // UDP_ASSOCIATE = 0x03,
+    
+    int reserved = clientData->buffer[index++]; // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
+    int addressType = clientData->buffer[index++]; 
+    //  addressType ENUM
+    // ADDRESS_TYPE_IPV4 = 0x01, // LEER 4 BYTES
+    // ADDRESS_TYPE_DOMAIN_NAME = 0x03, // LEER N BYTES
+    // ADDRESS_TYPE_IPV6 = 0x04, // LEER 
+    
+    index += 4; // asume ipv4
+    print_hex(&clientData->buffer[index], 2);
+    uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
+    index += 2;
+    printf("cmd=%d addressType=%d destinationAdress= destinationPort=%u\n", cmd, addressType, destinationPort);
+
+    selector_set_interest_key(key, OP_WRITE); 
+    return STM_REQUEST_WRITE;
+}
+
+enum StateSocksv5 stm_request_write(struct selector_key *key) {
+    ClientData *clientData = key->data; 
+
+    char message[BUFSIZE] = {0};
+    struct sockaddr_in *local = (struct sockaddr_in*) &_localAddr;
+    int index = 0;
+    message[index++] = SOCKS_PROTOCOL_VERSION;
+    message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
+    message[index++] = 0x00; // RESERVED debe valer 0x00
+    message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
+    memcpy(&message[index], &local->sin_addr, 4);
+    index += 4;
+    memcpy(&message[index], &local->sin_port, 2);
+    index += 2;
+    ssize_t bytes = send(key->fd, message, index, 0);
+
+    selector_set_interest_key(key, OP_READ);
+    
+    return STM_ERROR; // TODO: cambiarlo por el estado correcto
+}
+
+void stm_error(unsigned state, struct selector_key *key) {
+    ClientData *clientData = key->data; 
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    printf("[ERROR] bytes recibidos: ");
+    print_hex(clientData->buffer, bytes);
+}
+
+static const struct state_definition CLIENT_STATE_TABLE[] = {
+    {
+        .state = STM_INITIAL_READ, // https://datatracker.ietf.org/doc/html/rfc1928#section-3
+        .on_arrival = stm_initial_read_arrival,
+        .on_read_ready = stm_initial_read,
+    },
+    {
+        .state = STM_INITIAL_WRITE,
+        .on_write_ready = stm_initial_write,
+    }, 
+    {
+        .state = STM_LOGIN_READ, // https://datatracker.ietf.org/doc/html/rfc1929
+        .on_arrival = stm_login_read_arrival,
+        .on_read_ready = stm_login_read,
+    },
+    {
+        .state = STM_LOGIN_WRITE,
+        .on_write_ready= stm_login_write,
+    },
+    {
+        .state = STM_REQUEST_READ, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
+        .on_arrival = stm_request_read_arrival,
+        .on_read_ready = stm_request_read,
+    },
+    {
+        .state = STM_REQUEST_WRITE, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
+        .on_write_ready = stm_request_write,
+    },
+    {
+        .state = STM_REQUEST_CONNECT, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
+        .on_arrival = NULL, // TODO
+        .on_write_ready = NULL,
+    },
+    {
+        .state = STM_REQUEST_DNS, 
+        .on_write_ready = NULL, // TODO
+    },
+    ///
+        {
+        .state = STM_ERROR, 
+        .on_arrival = stm_error, 
+    },
+};
+
 /*
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
  ** y crear el socket pasivo, para que escuche en cualquier IP, ya sea v4 o v6
@@ -102,88 +303,32 @@ int acceptTCPConnection(int servSock) {
 
 void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
-
-    //
-    memset(clientData->buffer, 0, BUFSIZE);
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
-    print_hex(clientData->buffer, bytes);
-    int index = 0;
-    int version = clientData->buffer[index++];
-    int methodCount = clientData->buffer[index++];
-    printf("version=%d methodCount=%d [", version, methodCount);
-    for(int i = 0; i < methodCount; i++) {
-        printf("%d, ", clientData->buffer[index++]);
+    enum StateSocksv5 state = stm_handler_read(&clientData->stm, key);
+    if(state == STM_ERROR) {
+        client_handler_close(key);
     }
-    puts("]");
+    return;
+    //
+
+    /*
 
     //
-    char message[BUFSIZE] = {0};
-    message[0] = version;
-    message[1] = 2;
-    bytes = send(key->fd, message, 2, 0);
 
-    memset(clientData->buffer, 0, BUFSIZE);
-    bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    index = 1;
-    int usernameLen = clientData->buffer[index++];
-    memcpy(message, &clientData->buffer[index], usernameLen);
-    message[usernameLen] = '\0';
-    printf("username[%d]: '%s'\n", usernameLen, message);
-    index += usernameLen;
-    int passwordLen = clientData->buffer[index++];
-    memcpy(message, &clientData->buffer[index], passwordLen);
-    message[passwordLen] = '\0';
-    printf("password[%d]: '%s'\n", passwordLen, message);
     
     //
-    message[0] = version;
-    message[1] = 0x00; // LOGIN_SUCCESS
-    bytes = send(key->fd, message, 2, 0);
+
 
     //
-    memset(clientData->buffer, 0, BUFSIZE);
-    printf("after log: ");
-    bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    print_hex(clientData->buffer, bytes);
-    index = 1;
-    int cmd = clientData->buffer[index++];
-    /* cmd
-    CONNECT = 0x01,
-    BIND = 0x02,
-    UDP_ASSOCIATE = 0x03,
-    */
-    int reserved = clientData->buffer[index++]; // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
-    int addressType = clientData->buffer[index++]; 
-    /* addressType
-    ADDRESS_TYPE_IPV4 = 0x01, // LEER 4 BYTES
-    ADDRESS_TYPE_DOMAIN_NAME = 0x03, // LEER N BYTES
-    ADDRESS_TYPE_IPV6 = 0x04, // LEER 
-    */
-    index += 4; // asume ipv4
-    print_hex(&clientData->buffer[index], 2);
-    uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
-    index += 2;
-    printf("cmd=%d addressType=%d destinationAdress= destinationPort=%u\n", cmd, addressType, destinationPort);
+
 
     //
-    struct sockaddr_in *local = (struct sockaddr_in*) &_localAddr;
-    index = 0;
-    message[index++] = version;
-    message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
-    message[index++] = 0x00; // RESERVED debe valer 0x00
-    message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
-    memcpy(&message[index], &local->sin_addr, 4);
-    index += 4;
-    memcpy(&message[index], &local->sin_port, 2);
-    index += 2;
-    bytes = send(key->fd, message, index, 0);
+
 
     //
     bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
     print_hex(clientData->buffer, bytes);
     exit(0);
-    
+        */
     /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
     // int usernameLength = clientData->buffer[1];
 
@@ -215,25 +360,37 @@ void client_handler_read(struct selector_key *key) {
 
     /// ----- End Auth
 
-    fd_interest newInterests = OP_WRITE;
-    clientData->bytes = bytes;
-    if (clientData->bytes < BUFSIZ)
-        newInterests |= OP_READ;
-    if(clientData->bytes == 0)
-        newInterests = OP_NOOP;
-    selector_set_interest_key(key, newInterests);
+    // fd_interest newInterests = OP_WRITE;
+    // clientData->bytes = bytes;
+    // if (clientData->bytes < BUFSIZ)
+    //     newInterests |= OP_READ;
+    // if(clientData->bytes == 0)
+    //     newInterests = OP_NOOP;
+    // selector_set_interest_key(key, newInterests);
 }
 
 void client_handler_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-    printf("CLIENT_WRITE[%d]='%s'\n", key->fd, clientData->buffer);
-    send(key->fd, clientData->buffer, clientData->bytes, 0);
-    selector_set_interest_key(key, OP_READ);
+    enum StateSocksv5 state = stm_handler_write(&clientData->stm, key);
+    if(state == STM_ERROR) {
+        client_handler_close(key);
+    }
+}
+void client_handler_block(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    enum StateSocksv5 state = stm_handler_block(&clientData->stm, key);
+    if(state == STM_ERROR) {
+        client_handler_close(key);
+    }
 }
 void client_handler_close(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    // enum StateSocksv5 state = stm_handler_close(&clientData->stm, key); // este no retorna xd
+    // TODO: avoid double free
+    selector_set_interest_key(key, OP_NOOP); // quiza sacar esto
+    // selector_unregister_fd(key->s, key->s);
     puts("handling client close");
     free(key->data);
-    selector_set_interest_key(key, OP_NOOP);
 }
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
@@ -241,20 +398,16 @@ void handle_read_passive(struct selector_key *key) {
     clientHandler->handle_read = client_handler_read;
     clientHandler->handle_write = client_handler_write;
     clientHandler->handle_close = client_handler_close;
+    clientHandler->handle_block = client_handler_block;
     ClientData *clientData = calloc(1, sizeof(ClientData)); 
-    selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData);
-    // char buffer[BUFSIZE] = {0};
-    // puts("handle read!!");
-    // // ssize_t n = recv(key->fd, buffer, BUFSIZE, 0);
-    // ssize_t n = recv(clientSock, buffer, BUFSIZE, 0);
+    
+    clientData->stm.initial = STM_INITIAL_READ;
+    clientData->stm.max_state = STM_ERROR;
+    clientData->stm.states = CLIENT_STATE_TABLE;
 
-    // if (n <= 0) {
-    //     // cierre o error
-    //     selector_unregister_fd(key->s, key->fd);
-    //     close(key->fd);
-    //     return;
-    // }
-    // send(clientSock, buffer, n, 0);
+    stm_init(&clientData->stm);
+
+    selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData);
 }
 
 int main(int argc, char *argv[]) {
@@ -297,44 +450,6 @@ int main(int argc, char *argv[]) {
         .handle_close = NULL
     };
     selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
-
-    // START STM
-
-    // typedef enum StateEnum {
-    //     STATE_INITIAL = 0,
-    //     STATE_LOGIN,
-    //     STATE_CONNECTION,
-    //     // Otros estados a definir según la lógica de tu aplicación
-    // } StateEnum;
-
-    // struct state_definition states[] = {
-    //     {
-    //         .state = STATE_INITIAL, // Estado inicial
-    //         .on_arrival = NULL, // A definir más adelante
-    //         .on_departure = NULL, // A definir más adelante
-    //         .on_read_ready = client_handler_read,
-    //         .on_write_ready = client_handler_write,
-    //         .on_block_ready = NULL // A definir más adelante
-    //     },
-    //     // Otros estados a definir según la lógica de tu aplicación
-    // };
-    
-    // unsigned max_state = sizeof(states) / sizeof(states[0]) - 1; // Último índice
-
-    // struct state_machine *stm = {
-    //     .initial = STATE_INITIAL, // Estado inicial
-    //     .states = states, 
-    //     .max_state = max_state, // A definir más adelante
-    //     .current = NULL // A definir más adelante
-    // };
-
-    // stm_init(stm);
-
-    // unsigned currentState = stm_state(stm);
-    // printf("Estado inicial: %u\n", currentState);
-
-
-    // END STM
 
     // 5) Bucle principal: dejo que el selector gestione todos los eventos
     while (selector_select(selector) == SELECTOR_SUCCESS) {
