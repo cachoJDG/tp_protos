@@ -13,40 +13,53 @@
 #include "../stm.h"
 
 #define MAXPENDING 5 // Maximum outstanding connection requests
-#define BUFSIZE 256
+#define BUFSIZE 1024
 #define MAX_ADDR_BUFFER 128
-#define SELECTOR_CAPACITY 256
+#define SELECTOR_CAPACITY 1024
 
 static char addrBuffer[MAX_ADDR_BUFFER];
 
 typedef struct ClientData {
     char buffer[BUFSIZE];
     ssize_t bytes;
-    struct state_machine stm; // Pointer to the state machine for this client
+    struct state_machine stm;
 } ClientData;
-struct sockaddr_storage _localAddr; // TODO: VARIABLE GLOBAL!!!!!
+
 map hashmap = NULL; // Global hashmap to store user credentials
 void client_handler_read(struct selector_key *key);
 void client_handler_close(struct selector_key *key);
 
-enum StateSocksv5 {
-    STM_INITIAL_READ,
+typedef enum StateSocksv5 {
+    STM_INITIAL_READ = 0,
     STM_INITIAL_WRITE,
     STM_LOGIN_READ,
     STM_LOGIN_WRITE,
     STM_REQUEST_READ,
     STM_REQUEST_WRITE,
     STM_REQUEST_CONNECT,
-    STM_REQUEST_DNS,
+    STM_DNS_DONE,
+    STM_DONE,
     STM_ERROR, // DEBE SER EL ULTIMO
-};
+} StateSocksv5;
+
+typedef enum CommandSocksv5 {
+    CMD_CONNECT = 0x01,
+    CMD_BIND = 0x02,
+    CMD_UDP_ASSOCIATE = 0x03,
+} CommandSocksv5;
+
+typedef enum AddressTypeSocksv5 {
+    SOCKSV5_ADDR_TYPE_IPV4 = 0x01,
+    SOCKSV5_ADDR_TYPE_DOMAIN_NAME = 0x03,
+    SOCKSV5_ADDR_TYPE_IPV6 = 0x04
+} AddressTypeSocksv5;
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
     memset(clientData->buffer, 0, sizeof(clientData->buffer));
 }
 
-enum StateSocksv5 stm_initial_read(struct selector_key *key) {
+StateSocksv5 stm_initial_read(struct selector_key *key) {
     ClientData *clientData = key->data; // TODO: validar si nos mandaron menos. ahora crashearia 
 
     ssize_t bytesRead = recv(key->fd, clientData->buffer, BUFSIZE, 0);
@@ -69,7 +82,7 @@ enum StateSocksv5 stm_initial_read(struct selector_key *key) {
     return STM_INITIAL_WRITE;
 }
 
-enum StateSocksv5 stm_initial_write(struct selector_key *key) {
+StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
     char message[BUFSIZE] = {0};
@@ -79,7 +92,7 @@ enum StateSocksv5 stm_initial_write(struct selector_key *key) {
     selector_set_interest_key(key, OP_READ); 
     return STM_LOGIN_READ;
 
-    // TODO: este es el caso de que el cliente haya seleccionado METHOD=NONE=0x00
+    // TODO: falta el caso de que el cliente haya seleccionado METHOD=NONE=0x00
     // return STM_REQUEST_READ;
 }
 
@@ -88,7 +101,7 @@ void stm_login_read_arrival(unsigned state, struct selector_key *key) {
     memset(clientData->buffer, 0, BUFSIZE);
 }
 
-enum StateSocksv5 stm_login_read(struct selector_key *key) {
+StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     char message[BUFSIZE] = {0};
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
@@ -108,7 +121,7 @@ enum StateSocksv5 stm_login_read(struct selector_key *key) {
     return STM_LOGIN_WRITE;
 }
 
-enum StateSocksv5 stm_login_write(struct selector_key *key) {
+StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
     char message[2];
@@ -125,55 +138,120 @@ void stm_request_read_arrival(unsigned state, struct selector_key *key) {
     memset(clientData->buffer, 0, BUFSIZE);
 }
 
-enum StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca tiene MUCHA funcionalidad por hacer.
+StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca tiene MUCHA funcionalidad por hacer.
     ClientData *clientData = key->data;
 
     printf("after log: ");
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
     print_hex(clientData->buffer, bytes);
+    // TODO: Ojo que está ignorando la versión (debería rechazar si la versión es incorrecta)
+    // Para rechazar deberíamos mandar un mensaje que diga "05 Connection Refused"
     int index = 1;
-    int cmd = clientData->buffer[index++];
-    //  cmd ENUM
-    // CONNECT = 0x01,
-    // BIND = 0x02,
-    // UDP_ASSOCIATE = 0x03,
+    CommandSocksv5 cmd = clientData->buffer[index++];
+    switch (cmd) {
+        case CMD_CONNECT:
+            
+            break;
+        case CMD_BIND:
+
+            break;
+        case CMD_UDP_ASSOCIATE:
+        
+            break;
+        default:
+            log(ERROR, "client sent invalid COMMAND: 0x%x", cmd);
+            // The reply specified REP as X'07' "Command not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
+            send(key->fd, "\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
+            return STM_ERROR;
+    }
     
     int reserved = clientData->buffer[index++]; // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
-    int addressType = clientData->buffer[index++]; 
-    //  addressType ENUM
-    // ADDRESS_TYPE_IPV4 = 0x01, // LEER 4 BYTES
-    // ADDRESS_TYPE_DOMAIN_NAME = 0x03, // LEER N BYTES
-    // ADDRESS_TYPE_IPV6 = 0x04, // LEER 
+    AddressTypeSocksv5 addressType = clientData->buffer[index++]; 
+    uint32_t destinationIPv4;
+    // __uint128_t destinationIPv6;
+    switch (addressType) {
+        case SOCKSV5_ADDR_TYPE_IPV4:
+            destinationIPv4 = htonl(*(uint32_t *)&clientData->buffer[index]);
+            printf("destAddress=%x ", destinationIPv4);
+            index += 4;
+            break;
+        case SOCKSV5_ADDR_TYPE_DOMAIN_NAME:
+            size_t domainNameSize = clientData->buffer[index++];
+            char domainName[256] = {0};
+            memcpy(domainName, &clientData->buffer[index], domainNameSize);
+            domainName[domainNameSize] = '\0';
+            index += domainNameSize;
+            printf("destAddress[%ld]='%s'", domainNameSize, domainName);
+            // TODO(GAGO): llamar aca al thread de DNS. guardado en domainName con su domainNameSize
+            // la respuesta se procesa en la funcion  stm_dns_done() que es el siguiente estado
+
+            return STM_DNS_DONE;
+            break;
+        case SOCKSV5_ADDR_TYPE_IPV6:
+            index += 16;
+            // TODO: Lógica para ipv6
+            break;
+        default:
+            log(ERROR, "client sent invalid ADDRESS_TYPE: 0x%x", cmd);
+            // The reply specified REP as X'08' "Address type not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
+            send(key->fd, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
+            return STM_ERROR;
+    }
+
     
-    index += 4; // asume ipv4
-    print_hex(&clientData->buffer[index], 2);
+    
     uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
     index += 2;
-    printf("cmd=%d addressType=%d destinationAdress= destinationPort=%u\n", cmd, addressType, destinationPort);
+    printf("cmd=%d addressType=%d destinationPort=%u\n", cmd, addressType, destinationPort);
 
     selector_set_interest_key(key, OP_WRITE); 
     return STM_REQUEST_WRITE;
 }
 
-enum StateSocksv5 stm_request_write(struct selector_key *key) {
+StateSocksv5 stm_request_write(struct selector_key *key) {
     ClientData *clientData = key->data; 
 
     char message[BUFSIZE] = {0};
-    struct sockaddr_in *local = (struct sockaddr_in*) &_localAddr;
     int index = 0;
     message[index++] = SOCKS_PROTOCOL_VERSION;
     message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
     message[index++] = 0x00; // RESERVED debe valer 0x00
     message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
-    memcpy(&message[index], &local->sin_addr, 4);
+    /* TODO:
+    BND.ADDR and BND.PORT:
+    These are the address and port that your proxy server actually used when creating the outgoing connection to the 
+    destination (i.e., the local side of the proxy's connection to the target).
+
+//        after connect()
+    struct sockaddr_storage boundAddr;
+    socklen_t boundLen = sizeof(boundAddr);
+    getsockname(outgoing_fd, (struct sockaddr*)&boundAddr, &boundLen);
+
+    if (boundAddr.ss_family == AF_INET) {
+        struct sockaddr_in *addr_in = (struct sockaddr_in *)&boundAddr;
+        message[3] = 0x01; // IPv4
+        memcpy(&message[4], &addr_in->sin_addr, 4);
+        uint16_t port = ntohs(addr_in->sin_port);
+        message[8] = (port >> 8) & 0xFF;
+        message[9] = port & 0xFF;
+        total_len = 10;
+    }
+    */
     index += 4;
-    memcpy(&message[index], &local->sin_port, 2);
+
     index += 2;
     ssize_t bytes = send(key->fd, message, index, 0);
 
     selector_set_interest_key(key, OP_READ);
     
     return STM_ERROR; // TODO: cambiarlo por el estado correcto
+}
+
+StateSocksv5 stm_dns_done(struct selector_key *key) {
+    ClientData *clientData = key->data; 
+    // TODO(GAGO): aca procesar el dns  
+    
+    return STM_ERROR; // aca deberiamos empezar la conexion
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
@@ -217,11 +295,15 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = NULL,
     },
     {
-        .state = STM_REQUEST_DNS, 
-        .on_write_ready = NULL, // TODO
+        .state = STM_DNS_DONE, 
+        .on_block_ready = stm_dns_done, 
     },
     ///
-        {
+    {
+        .state = STM_DONE, 
+        .on_block_ready = NULL, // TODO 
+    },
+    {
         .state = STM_ERROR, 
         .on_arrival = stm_error, 
     },
@@ -259,7 +341,8 @@ int setupTCPServerSocket(const char *service) {
 			log(DEBUG, "Cant't create socket on %s : %s ", printAddressPort(addr, addrBuffer), strerror(errno));  
 			continue;       // Socket creation failed; try next address
 		}
-
+        // man 7 ip. no importa reportar nada si falla.
+        setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int));
 		// Bind to ALL the address and set socket to listen
 		if ((bind(servSock, addr->ai_addr, addr->ai_addrlen) == 0) && (listen(servSock, MAXPENDING) == 0)) {
 			// Print local address of socket
@@ -267,7 +350,6 @@ int setupTCPServerSocket(const char *service) {
 			socklen_t addrSize = sizeof(localAddr);
 			if (getsockname(servSock, (struct sockaddr *) &localAddr, &addrSize) >= 0) {
 				printSocketAddress((struct sockaddr *) &localAddr, addrBuffer);
-                _localAddr = localAddr;
 				log(INFO, "Binding to %s", addrBuffer);
 			}
 		} else {
@@ -283,8 +365,7 @@ int setupTCPServerSocket(const char *service) {
 }
 
 int acceptTCPConnection(int servSock) {
-	struct sockaddr_storage clntAddr; // Client address
-	// Set length of client address structure (in-out parameter)
+	struct sockaddr_storage clntAddr;
 	socklen_t clntAddrLen = sizeof(clntAddr);
 
 	// Wait for a client to connect
@@ -294,7 +375,6 @@ int acceptTCPConnection(int servSock) {
 		return -1;
 	}
 
-	// clntSock is connected to a client!
 	printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
 	log(INFO, "Handling client %s", addrBuffer);
 
@@ -303,82 +383,22 @@ int acceptTCPConnection(int servSock) {
 
 void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
-    enum StateSocksv5 state = stm_handler_read(&clientData->stm, key);
+    StateSocksv5 state = stm_handler_read(&clientData->stm, key);
     if(state == STM_ERROR) {
         client_handler_close(key);
     }
-    return;
-    //
-
-    /*
-
-    //
-
-    
-    //
-
-
-    //
-
-
-    //
-
-
-    //
-    bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    print_hex(clientData->buffer, bytes);
-    exit(0);
-        */
-    /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
-    // int usernameLength = clientData->buffer[1];
-
-    // TODO: Ver qué hacer con el null terminated
-    // char clientName[64] ;
-    // memcpy(clientName, &clientData->buffer[2], usernameLength);
-    // clientName[usernameLength] = '\0'; // Null terminate the username
-
-    // int passwordLength = clientData->buffer[usernameLength + 2];
-
-    // char clientPassword[64];
-    // memcpy(clientPassword, &clientData->buffer[usernameLength + 3], passwordLength);
-    // clientPassword[passwordLength] = '\0'; // Null terminate the username
-
-    // printf("Username length: %d\n", usernameLength);
-    // printf("Username: %s\n", clientName);
-    // printf("Password length: %d\n", passwordLength);
-    // printf("Password: %s\n", clientPassword);
-
-
-    // if(map_contains(hashmap, clientName) == false) {
-    //     printf("User %s not found\n", clientName);
-    //     clientData->bytes = 0; // No response
-    //     selector_set_interest_key(key, OP_NOOP);
-    //     return;
-    // }
-
-    // printf("User %s authenticated successfully\n", clientName);
-
-    /// ----- End Auth
-
-    // fd_interest newInterests = OP_WRITE;
-    // clientData->bytes = bytes;
-    // if (clientData->bytes < BUFSIZ)
-    //     newInterests |= OP_READ;
-    // if(clientData->bytes == 0)
-    //     newInterests = OP_NOOP;
-    // selector_set_interest_key(key, newInterests);
 }
 
 void client_handler_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-    enum StateSocksv5 state = stm_handler_write(&clientData->stm, key);
+    StateSocksv5 state = stm_handler_write(&clientData->stm, key);
     if(state == STM_ERROR) {
         client_handler_close(key);
     }
 }
 void client_handler_block(struct selector_key *key) {
     ClientData *clientData = key->data;
-    enum StateSocksv5 state = stm_handler_block(&clientData->stm, key);
+    StateSocksv5 state = stm_handler_block(&clientData->stm, key);
     if(state == STM_ERROR) {
         client_handler_close(key);
     }
@@ -392,26 +412,27 @@ void client_handler_close(struct selector_key *key) {
     puts("handling client close");
     free(key->data);
 }
+
+fd_handler CLIENT_HANDLER = {
+    .handle_read = client_handler_read,
+    .handle_write = client_handler_write,
+    .handle_block = client_handler_block,
+    .handle_close = client_handler_close,
+};
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
-    fd_handler *clientHandler = malloc(sizeof(fd_handler)); // TODO free
-    clientHandler->handle_read = client_handler_read;
-    clientHandler->handle_write = client_handler_write;
-    clientHandler->handle_close = client_handler_close;
-    clientHandler->handle_block = client_handler_block;
+
     ClientData *clientData = calloc(1, sizeof(ClientData)); 
     
     clientData->stm.initial = STM_INITIAL_READ;
     clientData->stm.max_state = STM_ERROR;
     clientData->stm.states = CLIENT_STATE_TABLE;
-
     stm_init(&clientData->stm);
 
-    selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData);
+    selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData);
 }
 
 int main(int argc, char *argv[]) {
-
     hashmap = map_create();
     map_set(hashmap, "john", "doe");
     map_set(hashmap, "alex", "1234");
@@ -420,88 +441,45 @@ int main(int argc, char *argv[]) {
     }
     printf("Map created with %d elements\n", map_size(hashmap));
 
-    if (argc != 2) {
+    if (argc > 2) {
         log(FATAL, "usage: %s <Server Port>", argv[0]);
     }
 
-    // 1) Preparo el socket de escucha
-    int servSock = setupTCPServerSocket(argv[1]);
+    int servSock = setupTCPServerSocket((argc == 1) ? "1024" : argv[1]);
     if (servSock < 0) return 1;
 
-    // 2) Pongo el socket en modo no-bloqueante
+    // registrar sigterm es útil para terminar el programa normalmente.
+    // esto ayuda mucho en herramientas como valgrind.
+    // signal(SIGTERM, sigterm_handler);
+    // signal(SIGINT,  sigterm_handler);
+
     if (selector_fd_set_nio(servSock) < 0) {
         log(FATAL, "Could not set O_NONBLOCK on listening socket");
     }
 
-    // 3) Inicializo el selector
     const struct selector_init conf = {
-        .signal = SIGALRM,          // o la señal que prefieras para notifs
+        .signal = SIGALRM,          
         .select_timeout = { .tv_sec = 1, .tv_nsec = 0 }
     };
     selector_init(&conf);
     fd_selector selector = selector_new(SELECTOR_CAPACITY);
 
-    // 4) Registro el socket de escucha en el selector
-    //    Cuando haya OP_READ, invocará handle_listen()
     static const fd_handler listen_handler = {
-        .handle_read  = handle_read_passive,   // en handle_read haces el accept()
+        .handle_read  = handle_read_passive,
         .handle_write = NULL,
         .handle_block = NULL,
         .handle_close = NULL
     };
     selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
 
-    // 5) Bucle principal: dejo que el selector gestione todos los eventos
     while (selector_select(selector) == SELECTOR_SUCCESS) {
-        ; // selector_select internamente invoca tus callbacks
+        ; 
     }
 
     selector_destroy(selector);
 	selector_close();
+    if(servSock >= 0) {
+        close(servSock);
+    }
     return 0;
 }
-
-// unsigned stm_state_initial_handler(struct selector_key* key) {
-//     ClientData *clientData = key->data;
-//     // ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZ, 0);
-//     // printf("CLIENT_READ[%d]='%s'\n", key->fd,clientData->buffer);
-//     int usernameLength = clientData->buffer[1];
-    
-//     /// ---- Auth (Por ahora, no hay estados y lo único que hace el server es responder al pedido de login)
-
-//     // TODO: Ver qué hacer con el null terminated
-//     char clientName[64] ;
-//     memcpy(clientName, &clientData->buffer[2], usernameLength);
-//     clientName[usernameLength] = '\0'; // Null terminate the username
-
-//     int passwordLength = clientData->buffer[usernameLength + 2];
-
-//     char clientPassword[64];
-//     memcpy(clientPassword, &clientData->buffer[usernameLength + 3], passwordLength);
-//     clientPassword[passwordLength] = '\0'; // Null terminate the username
-
-//     printf("Username length: %d\n", usernameLength);
-//     printf("Username: %s\n", clientName);
-//     printf("Password length: %d\n", passwordLength);
-//     printf("Password: %s\n", clientPassword);
-
-
-//     if(map_contains(hashmap, clientName) == false) {
-//         printf("User %s not found\n", clientName);
-//         clientData->bytes = 0; // No response
-//         selector_set_interest_key(key, OP_NOOP);
-//         return;
-//     }
-
-//     printf("User %s authenticated successfully\n", clientName);
-
-//     /// ----- End Auth
-
-//     fd_interest newInterests = OP_WRITE;
-//     clientData->bytes = bytes;
-//     if (clientData->bytes < BUFSIZ)
-//         newInterests |= OP_READ;
-//     if(clientData->bytes == 0)
-//         newInterests = OP_NOOP;
-//     selector_set_interest_key(key, newInterests);
-// }
