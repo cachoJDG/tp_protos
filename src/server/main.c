@@ -11,6 +11,8 @@
 #include <signal.h>
 #include "map.h"
 #include "../stm.h"
+#include <pthread.h>
+#include "dns_resolver.h"
 
 #define MAXPENDING 5 // Maximum outstanding connection requests
 #define BUFSIZE 1024
@@ -19,7 +21,11 @@
 
 static char addrBuffer[MAX_ADDR_BUFFER];
 
+extern fd_handler CLIENT_HANDLER;
+
 typedef struct ClientData {
+    int           client_fd;    // descriptor del socket del cliente SOCKS
+    int           outgoing_fd; 
     char buffer[BUFSIZE];
     ssize_t bytes;
     struct state_machine stm;
@@ -53,6 +59,32 @@ typedef enum AddressTypeSocksv5 {
     SOCKSV5_ADDR_TYPE_DOMAIN_NAME = 0x03,
     SOCKSV5_ADDR_TYPE_IPV6 = 0x04
 } AddressTypeSocksv5;
+
+typedef struct {
+    char     host[256];
+    char     service[6];
+    fd_selector selector;
+    void    *client_data;
+} DnsJob;
+
+static void *dns_thread_func(void *arg) {
+    DnsJob *job = arg;
+    int out_fd = dns_connect(job->host, job->service);
+    if (out_fd >= 0) {
+        ((ClientData*)job->client_data)->outgoing_fd = out_fd;
+        selector_register(
+            job->selector,
+            out_fd,
+            &CLIENT_HANDLER,        
+            OP_WRITE,               // esperamos a que connect() termine, deberia ir algo del estilo OP_WRITE
+            job->client_data
+        );
+    } else {
+        // todo marcar error en client_data 
+    }
+    free(job);
+    return NULL;
+}
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
@@ -181,7 +213,26 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             memcpy(domainName, &clientData->buffer[index], domainNameSize);
             domainName[domainNameSize] = '\0';
             index += domainNameSize;
-            printf("destAddress[%ld]='%s'", domainNameSize, domainName);
+
+            uint16_t port = ntohs(*(uint16_t *)&clientData->buffer[index]);
+            index += 2;
+
+            printf("destAddress[%zu]='%s' port=%u\n", domainNameSize, domainName, port);
+            fflush(stdout);
+
+            char service_str[6];
+            snprintf(service_str, sizeof(service_str), "%u", port);
+
+            DnsJob *job = malloc(sizeof(*job));
+            strcpy(job->host, domainName);
+            strcpy(job->service, service_str);
+            job->selector    = key->s;
+            job->client_data = key->data;
+
+            pthread_t tid;
+            pthread_create(&tid, NULL, dns_thread_func, job);
+            pthread_detach(tid);
+
             // TODO(GAGO): llamar aca al thread de DNS. guardado en domainName con su domainNameSize
             // la respuesta se procesa en la funcion  stm_dns_done() que es el siguiente estado
 
@@ -250,8 +301,38 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
 StateSocksv5 stm_dns_done(struct selector_key *key) {
     ClientData *clientData = key->data; 
     // TODO(GAGO): aca procesar el dns  
-    
-    return STM_ERROR; // aca deberiamos empezar la conexion
+    int err = 0;
+    socklen_t len = sizeof(err);
+    if (getsockopt(clientData->outgoing_fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+        log(ERROR, "connect() failed: %s", strerror(err));
+        
+        //todo chequear si esto esta bien como respuesta de ok
+        char reply_err[10] = { 
+            0x05,       // VERSION
+            0x05,       // REP = connection refused
+            0x00,       // RSV
+            0x01, 0,0,0,0,  // ATYP=IPv4 + BND.ADDR = 0.0.0.0
+            0,0         // BND.PORT = 0
+        };
+        send(clientData->client_fd, reply_err, sizeof(reply_err), 0);
+        close(clientData->outgoing_fd);
+        return STM_ERROR;
+    }
+
+    //todo chequear si esto esta bien como respuesta de ok
+    char reply_ok[10] = {
+        0x05,       
+        0x00,       // REP = succeeded
+        0x00,       
+        0x01, 0,0,0,0, 
+        0,0        
+    };
+    send(clientData->client_fd, reply_ok, sizeof(reply_ok), 0);
+
+    selector_set_interest_key(key, OP_READ);
+    selector_set_interest(key->s, clientData->client_fd, OP_READ);
+
+    return STM_DONE; // lo cambie a donde estaba en error
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
@@ -296,7 +377,7 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
     },
     {
         .state = STM_DNS_DONE, 
-        .on_block_ready = stm_dns_done, 
+        .on_write_ready = stm_dns_done,
     },
     ///
     {
@@ -427,6 +508,8 @@ void handle_read_passive(struct selector_key *key) {
     clientData->stm.initial = STM_INITIAL_READ;
     clientData->stm.max_state = STM_ERROR;
     clientData->stm.states = CLIENT_STATE_TABLE;
+    clientData->client_fd   = clientSocket;
+    clientData->outgoing_fd = -1;
     stm_init(&clientData->stm);
 
     selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData);
