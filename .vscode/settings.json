@@ -1,6 +1,11 @@
 {
     "files.associations": {
         "logger.h": "c",
-        "system_error": "c"
+        "system_error": "c",
+        "connectiontraffic.h": "c",
+        "dns_resolver.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c"
     }
 }

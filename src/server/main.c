@@ -13,40 +13,21 @@
 #include "../stm.h"
 #include <pthread.h>
 #include "dns_resolver.h"
+#include "./connectionTraffic.h"
+#define MAXPENDING 32 // Maximum outstanding connection requests
 
-#define MAXPENDING 5 // Maximum outstanding connection requests
-#define BUFSIZE 1024
-#define MAX_ADDR_BUFFER 128
+#define MAX_ADDR_BUFFER 256
 #define SELECTOR_CAPACITY 1024
 
 static char addrBuffer[MAX_ADDR_BUFFER];
 
 extern fd_handler CLIENT_HANDLER;
 
-typedef struct ClientData {
-    int           client_fd;    // descriptor del socket del cliente SOCKS
-    int           outgoing_fd; 
-    char buffer[BUFSIZE];
-    ssize_t bytes;
-    struct state_machine stm;
-} ClientData;
-
 map hashmap = NULL; // Global hashmap to store user credentials
 void client_handler_read(struct selector_key *key);
 void client_handler_close(struct selector_key *key);
 
-typedef enum StateSocksv5 {
-    STM_INITIAL_READ = 0,
-    STM_INITIAL_WRITE,
-    STM_LOGIN_READ,
-    STM_LOGIN_WRITE,
-    STM_REQUEST_READ,
-    STM_REQUEST_WRITE,
-    STM_REQUEST_CONNECT,
-    STM_DNS_DONE,
-    STM_DONE,
-    STM_ERROR, // DEBE SER EL ULTIMO
-} StateSocksv5;
+
 
 typedef enum CommandSocksv5 {
     CMD_CONNECT = 0x01,
@@ -99,15 +80,16 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
         return STM_ERROR;
     }
 
-    print_hex(clientData->buffer, bytesRead);
     int index = 0;
     int version = clientData->buffer[index++];
     int methodCount = clientData->buffer[index++];
-    printf("version=%d methodCount=%d [", version, methodCount);
+
+    char buffer[BUFSIZE] = {0};
+    int string_index = 0;
     for(int i = 0; i < methodCount; i++) {
-        printf("%d, ", clientData->buffer[index++]);
+        string_index += sprintf(&buffer[string_index], "%d, ", clientData->buffer[index++]);
     }
-    puts("]");
+    log(DEBUG, "version=%d methods[%d]=%s", version, methodCount, buffer);
 
     selector_set_interest_key(key, OP_WRITE); 
 
@@ -117,10 +99,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
-    char message[BUFSIZE] = {0};
-    message[0] = SOCKS_PROTOCOL_VERSION;
-    message[1] = 0x02; // LOGIN
-    ssize_t bytes = send(key->fd, message, 2, 0);
+    ssize_t bytes = send(key->fd, "\x05\x02", 2, 0); // 0x02 = LOGIN
     selector_set_interest_key(key, OP_READ); 
     return STM_LOGIN_READ;
 
@@ -137,17 +116,16 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     char message[BUFSIZE] = {0};
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    print_hex(clientData->buffer, bytes);
+
     int index = 1;
     int usernameLen = clientData->buffer[index++];
     memcpy(message, &clientData->buffer[index], usernameLen);
     message[usernameLen] = '\0';
-    printf("username[%d]: '%s'\n", usernameLen, message);
     index += usernameLen;
     int passwordLen = clientData->buffer[index++];
-    memcpy(message, &clientData->buffer[index], passwordLen);
-    message[passwordLen] = '\0';
-    printf("password[%d]: '%s'\n", passwordLen, message);
+    memcpy(&message[usernameLen+1], &clientData->buffer[index], passwordLen);
+    message[usernameLen + passwordLen + 1] = '\0';
+    log(DEBUG, "username[%d]='%s' password[%d]='%s'", usernameLen, message, passwordLen, &message[usernameLen+1]);
 
     selector_set_interest_key(key, OP_WRITE); 
     return STM_LOGIN_WRITE;
@@ -156,10 +134,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
-    char message[2];
-    message[0] = SOCKS_PROTOCOL_VERSION;
-    message[1] = 0x00; // LOGIN_SUCCESS
-    ssize_t bytes = send(key->fd, message, 2, 0);
+    ssize_t bytes = send(key->fd, "\x05\x00", 2, 0);
 
     selector_set_interest_key(key, OP_READ); 
     return STM_REQUEST_READ;
@@ -173,9 +148,7 @@ void stm_request_read_arrival(unsigned state, struct selector_key *key) {
 StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca tiene MUCHA funcionalidad por hacer.
     ClientData *clientData = key->data;
 
-    printf("after log: ");
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    print_hex(clientData->buffer, bytes);
     // TODO: Ojo que está ignorando la versión (debería rechazar si la versión es incorrecta)
     // Para rechazar deberíamos mandar un mensaje que diga "05 Connection Refused"
     int index = 1;
@@ -185,11 +158,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             
             break;
         case CMD_BIND:
-
-            break;
         case CMD_UDP_ASSOCIATE:
-        
-            break;
         default:
             log(ERROR, "client sent invalid COMMAND: 0x%x", cmd);
             // The reply specified REP as X'07' "Command not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
@@ -200,48 +169,65 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
     int reserved = clientData->buffer[index++]; // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
     AddressTypeSocksv5 addressType = clientData->buffer[index++]; 
     uint32_t destinationIPv4;
-    // __uint128_t destinationIPv6;
+    char hostname[MAX_ADDR_BUFFER + 1] = {0};
+    int destinationPort = 0;
+
+    struct addrinfo addrHints;
+    memset(&addrHints, 0, sizeof(addrHints));
+    addrHints.ai_socktype = SOCK_STREAM;
+    addrHints.ai_protocol = IPPROTO_TCP;
     switch (addressType) {
-        case SOCKSV5_ADDR_TYPE_IPV4:
-            destinationIPv4 = htonl(*(uint32_t *)&clientData->buffer[index]);
-            printf("destAddress=%x ", destinationIPv4);
+        case SOCKSV5_ADDR_TYPE_IPV4: {
+            addrHints.ai_family = AF_INET;
+            struct in_addr addr;
+            memcpy(&addr, &clientData->buffer[index], 4);
+            // destinationIPv4 = htonl(*(uint32_t *)&clientData->buffer[index]);
+            // printf("destAddress=%x ", destinationIPv4);
             index += 4;
+            destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
+            inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
             break;
+        }
         case SOCKSV5_ADDR_TYPE_DOMAIN_NAME:
             size_t domainNameSize = clientData->buffer[index++];
             char domainName[256] = {0};
             memcpy(domainName, &clientData->buffer[index], domainNameSize);
+            memcpy(hostname, &clientData->buffer[index], domainNameSize);
             domainName[domainNameSize] = '\0';
             index += domainNameSize;
 
-            uint16_t port = ntohs(*(uint16_t *)&clientData->buffer[index]);
+            destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
             index += 2;
 
-            printf("destAddress[%zu]='%s' port=%u\n", domainNameSize, domainName, port);
-            fflush(stdout);
+            // printf("destAddress[%zu]='%s' port=%u\n", domainNameSize, domainName, destinationPort);
+            // fflush(stdout);
 
-            char service_str[6];
-            snprintf(service_str, sizeof(service_str), "%u", port);
+            // char service_str[6];
+            // snprintf(service_str, sizeof(service_str), "%u", port);
 
-            DnsJob *job = malloc(sizeof(*job));
-            strcpy(job->host, domainName);
-            strcpy(job->service, service_str);
-            job->selector    = key->s;
-            job->client_data = key->data;
+            // DnsJob *job = malloc(sizeof(*job));
+            // strcpy(job->host, domainName);
+            // strcpy(job->service, service_str);
+            // job->selector    = key->s;
+            // job->client_data = key->data;
 
-            pthread_t tid;
-            pthread_create(&tid, NULL, dns_thread_func, job);
-            pthread_detach(tid);
+            // pthread_t tid;
+            // pthread_create(&tid, NULL, dns_thread_func, job);
+            // pthread_detach(tid);
 
             // TODO(GAGO): llamar aca al thread de DNS. guardado en domainName con su domainNameSize
             // la respuesta se procesa en la funcion  stm_dns_done() que es el siguiente estado
 
-            return STM_DNS_DONE;
+            // return STM_DNS_DONE;
             break;
-        case SOCKSV5_ADDR_TYPE_IPV6:
+        case SOCKSV5_ADDR_TYPE_IPV6: {
+            addrHints.ai_family = AF_INET6;
+            struct in6_addr addr;
+            memcpy(&addr, &clientData->buffer[index], 16);
+            inet_ntop(AF_INET6, &addr, hostname, INET6_ADDRSTRLEN);
             index += 16;
-            // TODO: Lógica para ipv6
             break;
+        }
         default:
             log(ERROR, "client sent invalid ADDRESS_TYPE: 0x%x", cmd);
             // The reply specified REP as X'08' "Address type not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
@@ -249,15 +235,30 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             return STM_ERROR;
     }
 
+    char service[6] = {0};
+    sprintf(service, "%d", destinationPort);
     
-    
-    uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
+    // uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
     index += 2;
-    printf("cmd=%d addressType=%d destinationPort=%u\n", cmd, addressType, destinationPort);
+    int getAddrStatus = getaddrinfo(hostname, service, &addrHints, &clientData->connectAddresses);
+    if(getAddrStatus != 0) {
+        log(ERROR, "getaddrinfo() failed");
+        // The reply specifies ATYP as IPv4 and BND as 0.0.0.0:0.
+        char errorMessage[10] = "\x05 \x00\x01\x00\x00\x00\x00\x00\x00";
+        // We calculate the REP value based on the type of error returned by getaddrinfo
+        errorMessage[1] =
+            getAddrStatus == EAI_FAMILY   ? '\x08'  // REP is "Address type not supported"
+            : getAddrStatus == EAI_NONAME ? '\x04'  // REP is "Host Unreachable"
+                                          : '\x01'; // REP is "General SOCKS server failure"
+        send(key->fd, errorMessage, 10, 0);
+        return STM_ERROR;
+    }
+    log(DEBUG, "cmd=%d addressType=%d destinationPort=%u", cmd, addressType, destinationPort);
 
     selector_set_interest_key(key, OP_WRITE); 
     return STM_REQUEST_WRITE;
 }
+
 
 StateSocksv5 stm_request_write(struct selector_key *key) {
     ClientData *clientData = key->data; 
@@ -268,34 +269,71 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
     message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
     message[index++] = 0x00; // RESERVED debe valer 0x00
     message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
-    /* TODO:
-    BND.ADDR and BND.PORT:
-    These are the address and port that your proxy server actually used when creating the outgoing connection to the 
-    destination (i.e., the local side of the proxy's connection to the target).
 
-//        after connect()
-    struct sockaddr_storage boundAddr;
-    socklen_t boundLen = sizeof(boundAddr);
-    getsockname(outgoing_fd, (struct sockaddr*)&boundAddr, &boundLen);
-
-    if (boundAddr.ss_family == AF_INET) {
-        struct sockaddr_in *addr_in = (struct sockaddr_in *)&boundAddr;
-        message[3] = 0x01; // IPv4
-        memcpy(&message[4], &addr_in->sin_addr, 4);
-        uint16_t port = ntohs(addr_in->sin_port);
-        message[8] = (port >> 8) & 0xFF;
-        message[9] = port & 0xFF;
-        total_len = 10;
-    }
-    */
-    index += 4;
-
-    index += 2;
-    ssize_t bytes = send(key->fd, message, index, 0);
-
-    selector_set_interest_key(key, OP_READ);
+    char addrBuf[64];
+    int sock = -1;
+    char addrBuffer[128];
     
-    return STM_ERROR; // TODO: cambiarlo por el estado correcto
+    for (struct addrinfo* addr = clientData->connectAddresses; addr != NULL && sock == -1; addr = addr->ai_next) {
+        sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+        if (sock < 0) {
+            log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
+        } else {
+            errno = 0;
+            log(DEBUG, "Trying to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
+            if (connect(sock, addr->ai_addr, addr->ai_addrlen) != 0) {
+                log(ERROR, "Failed to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
+                close(sock);
+                sock = -1;
+            } else {
+                log(DEBUG, "Successfully connected to: %s (%s %s) %s %s", printFamily(addr), printType(addr), printProtocol(addr), addr->ai_canonname ? addr->ai_canonname : "-", printAddressPort(addr, addrBuf));
+            }
+        }
+    }
+    
+    struct sockaddr_storage boundAddress;
+    socklen_t boundAddressLen = sizeof(boundAddress);
+    if (getsockname(sock, (struct sockaddr*)&boundAddress, &boundAddressLen) >= 0) {
+        printSocketAddress((struct sockaddr*)&boundAddress, addrBuffer);
+        log(INFO, "Remote socket bound at %s", addrBuffer);
+    } else {
+        perror("[WRN] Failed to getsockname() for remote socket");
+    }
+
+    // Send a server reply: SUCCESS, then send the address to which our socket is bound.
+    if (send(key->fd, "\x05\x00\x00", 3, 0) < 0)
+        return -1;
+
+    switch (boundAddress.ss_family) {
+        case AF_INET:
+            // Send: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
+            if (send(key->fd, "\x01", 1, 0) < 0)
+                return -1;
+            if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) < 0)
+                return -1;
+            if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) < 0)
+                return -1;
+            break;
+
+        case AF_INET6:
+            // Send: '\x04' (ATYP identifier for IPv6) followed by the IP and PORT.
+            if (send(key->fd, "\x04", 1, 0) < 0)
+                return -1;
+            if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) < 0)
+                return -1;
+            if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) < 0)
+                return -1;
+            break;
+
+        default:
+            // We don't know the address type? Send IPv4 0.0.0.0:0.
+            if (send(key->fd, "\x01\x00\x00\x00\x00\x00\x00", 7, 0) < 0)
+                return -1;
+            break;
+    }
+    clientData->outgoing_fd = sock;
+    selector_set_interest_key(key, OP_READ);
+    return STM_CONNECTION_TRAFFIC;
 }
 
 StateSocksv5 stm_dns_done(struct selector_key *key) {
@@ -332,14 +370,20 @@ StateSocksv5 stm_dns_done(struct selector_key *key) {
     selector_set_interest_key(key, OP_READ);
     selector_set_interest(key->s, clientData->client_fd, OP_READ);
 
-    return STM_DONE; // lo cambie a donde estaba en error
+    return STM_REQUEST_WRITE;
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data; 
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    printf("[ERROR] bytes recibidos: ");
+    log(ERROR, "bytes recibidos: ");
     print_hex(clientData->buffer, bytes);
+    selector_set_interest_key(key, OP_NOOP);
+}
+
+void stm_done_arrival(unsigned state, struct selector_key *key) {
+    log(DEBUG, "done");
+    selector_set_interest_key(key, OP_NOOP);
 }
 
 static const struct state_definition CLIENT_STATE_TABLE[] = {
@@ -376,13 +420,20 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = NULL,
     },
     {
+        .state = STM_CONNECTION_TRAFFIC, // se termino de establecer la conexion. y ahora se pasan los datos
+        .on_arrival = stm_connection_traffic_arrival,
+        .on_write_ready = stm_connection_traffic_write,
+        .on_read_ready = stm_connection_traffic_read,
+        .on_departure = stm_connection_traffic_departure,
+    },
+    {
         .state = STM_DNS_DONE, 
-        .on_write_ready = stm_dns_done,
+        .on_block_ready = stm_dns_done,
     },
     ///
     {
         .state = STM_DONE, 
-        .on_block_ready = NULL, // TODO 
+        .on_arrival = stm_done_arrival, 
     },
     {
         .state = STM_ERROR, 
@@ -455,6 +506,10 @@ int acceptTCPConnection(int servSock) {
 		log(ERROR, "accept() failed");
 		return -1;
 	}
+    if(selector_fd_set_nio(clntSock < 0)) {
+        log(ERROR, "accept() failed");
+        return -1;
+    }
 
 	printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
 	log(INFO, "Handling client %s", addrBuffer);
@@ -490,7 +545,7 @@ void client_handler_close(struct selector_key *key) {
     // TODO: avoid double free
     selector_set_interest_key(key, OP_NOOP); // quiza sacar esto
     // selector_unregister_fd(key->s, key->s);
-    puts("handling client close");
+    log(INFO, "handling client close");
     free(key->data);
 }
 
@@ -515,14 +570,24 @@ void handle_read_passive(struct selector_key *key) {
     selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData);
 }
 
+static void
+sigterm_handler(const int signal) {
+    log(INFO, "signal %d, cleaning up and exiting", signal);
+    exit(1);
+}
+
 int main(int argc, char *argv[]) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    close(STDIN_FILENO);
+
     hashmap = map_create();
     map_set(hashmap, "john", "doe");
     map_set(hashmap, "alex", "1234");
     if(map_contains(hashmap, "john") == true) {
-        printf("User john is in the map\n");
+        log(INFO, "User john is in the map");
     }
-    printf("Map created with %d elements\n", map_size(hashmap));
+    log(INFO, "Map created with %d elements", map_size(hashmap));
 
     if (argc > 2) {
         log(FATAL, "usage: %s <Server Port>", argv[0]);
@@ -533,8 +598,8 @@ int main(int argc, char *argv[]) {
 
     // registrar sigterm es útil para terminar el programa normalmente.
     // esto ayuda mucho en herramientas como valgrind.
-    // signal(SIGTERM, sigterm_handler);
-    // signal(SIGINT,  sigterm_handler);
+    signal(SIGTERM, sigterm_handler);
+    signal(SIGINT,  sigterm_handler);
 
     if (selector_fd_set_nio(servSock) < 0) {
         log(FATAL, "Could not set O_NONBLOCK on listening socket");
@@ -542,7 +607,7 @@ int main(int argc, char *argv[]) {
 
     const struct selector_init conf = {
         .signal = SIGALRM,          
-        .select_timeout = { .tv_sec = 1, .tv_nsec = 0 }
+        .select_timeout = { .tv_sec = 10, .tv_nsec = 0 }
     };
     selector_init(&conf);
     fd_selector selector = selector_new(SELECTOR_CAPACITY);
