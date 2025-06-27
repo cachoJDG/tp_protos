@@ -4,6 +4,9 @@
         "system_error": "c",
         "socket.h": "c",
         "selector.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "compare": "c",
+        "limits": "c",
+        "new": "c"
     }
 }

@@ -87,6 +87,18 @@ void print_users() {
     }
 }
 
+char *getUsers(){
+    static char buffer[1024];
+    buffer[0] = '\0'; // Inicializar el buffer
+    strcat(buffer, "Usuarios registrados:\n");
+    for (int i = 0; i < user_count; i++) {
+        strcat(buffer, users[i].username);
+        strcat(buffer, "\n");
+    }
+    strcat(buffer, "\0"); // Asegurar que el buffer esté null-terminated
+    return buffer;
+}
+
 /*
 int main() {
     load_users();

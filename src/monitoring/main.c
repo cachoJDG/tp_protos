@@ -36,6 +36,15 @@ void client_handler_close(struct selector_key *key);
 char username[64];  //TODO: ESTA MAL, SACAR.
 char password[64];
 
+int command = 0; //TODO: ESTA MAL, SACAR.
+
+enum {
+	LIST_USERS = 1,
+	ADD_USER = 2,
+	REMOVE_USER = 3,
+	CHANGE_PASSWORD = 4
+}Commands;
+
 void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
     printf("%s (%zu bytes): ", label, length);
     for (size_t i = 0; i < length; i++) {
@@ -133,49 +142,17 @@ void stm_read_arrival(unsigned state, struct selector_key *key) {
 enum StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    printf("String recibido: %b\n", clientData->buffer);
     print_hex_compact("Datos recibidos", (unsigned char*)clientData->buffer, bytes);
     char * message = clientData->buffer;
 
-    /*
-
-    char *username = strtok(clientData->buffer, "|");
-    char *password = strtok(NULL, "|");
-
-    if (username && password) {
-        printf("Usuario: %s\n", username);
-        printf("Contraseña: %s\n", password);
-        if(validate_login(username, password)) {
-            printf("Login exitoso\n");
-        } else {
-            printf("Login fallido\n");
-            clientData->user.username[0] = '\0';
-            clientData->user.password[0] = '\0';
-            selector_set_interest_key(key, OP_NOOP); // Deshabilitar escritura
-            return STM_ERROR; // O el estado que corresponda para manejar el error
-        }
-        strncpy(clientData->user.username, username, sizeof(clientData->user.username) - 1);
-        clientData->user.username[sizeof(clientData->user.username) - 1] = '\0';
-        strncpy(clientData->user.password, password, sizeof(clientData->user.password) - 1);
-        clientData->user.password[sizeof(clientData->user.password) - 1] = '\0';
-    } else {
-        printf("Formato inválido\n");
-        clientData->user.username[0] = '\0';
-        clientData->user.password[0] = '\0';
-    }
-    */
     int index = 1;
     int usernameLength = message[index++];
     memcpy(username, message + index, usernameLength);
     username[usernameLength] = '\0'; // Null-terminate the username
-    printf("Username: %s\n", username);
-    printf("Username length: %d\n", usernameLength);
     index += usernameLength;
     int passwordLength = message[index++];
     memcpy(password, message + index, passwordLength);
     password[passwordLength] = '\0'; // Null-terminate the password
-    printf("Password: %s\n", password);
-    printf("Password length: %d\n", passwordLength);
 
     selector_set_interest_key(key, OP_WRITE); 
     return STM_LOGIN_WRITE;
@@ -186,12 +163,76 @@ enum StateSocksv5 stm_login_write(struct state_machine *stm, struct selector_key
 
     if(validate_login(username, password)){
         char welcomeMessage[64];
-        snprintf(welcomeMessage, sizeof(welcomeMessage), "Bienvenido al servidor, %s\n", username);
-        printf("%s", welcomeMessage);
-        send(key->fd, welcomeMessage, strlen(welcomeMessage), 0);
+        printf("ACEPTADO\n");
+        char message[2] = {1, 1};
+        send(key->fd, &message, 1, 0);
+        
+        selector_set_interest_key(key, OP_READ);
+        return STM_REQUEST_READ;
+    } else {
+        char welcomeMessage[64];
+        printf("RECHAZADO\n");
+        char message[2] = {1, 0};
+        send(key->fd, &message, 2, 0);
+        
+        selector_set_interest_key(key, OP_NOOP);
+        return STM_ERROR;
     }
+}
 
-    return STM_LOGIN_READ; // O el estado que corresponda
+enum StateSocksv5 stm_request_read(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    printf("recibi!!\n");
+    print_hex_compact("Datos recibidos", (unsigned char*)clientData->buffer, bytes);
+    char command = clientData->buffer[0];
+
+    selector_set_interest_key(key, OP_WRITE);
+    return STM_REQUEST_WRITE;
+}
+
+char *getStringFromSize(char *buffer) {  //El primer caracter del buffer es el tamaño del string, luego el string
+    char size = buffer[0];
+    char *str = malloc(size + 1);
+    if (str == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+    memcpy(str, buffer + 1, size);
+    str[size] = '\0'; // Null-terminate the string
+    printf("String recibido: %s\n", str);
+    printf("Tamaño del string: %d\n", size);
+    return str;
+}
+
+enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_key *key) {
+    ClientData *clientData = key->data;
+    char command = clientData->buffer[0];
+    char *buffer = clientData->buffer;
+    
+    char response[1024];
+    switch(command) {
+        case LIST_USERS:
+            snprintf(response, sizeof(response), "Usuarios registrados: %s", getUsers());
+            break;
+        case ADD_USER:
+            char * usernameToAdd = getStringFromSize(buffer + 1);
+            char * password = getStringFromSize(buffer + 1 + buffer[1] + 1);
+            printf("Agregando usuario: %s con contraseña: %s\n", usernameToAdd, password);
+            add_user(usernameToAdd, password);
+            snprintf(response, sizeof(response), "Usuario %s agregado exitosamente\n%s", usernameToAdd, getUsers());
+            free(usernameToAdd);
+            free(password);
+            break;
+        default:
+            snprintf(response, sizeof(response), "Comando %d procesado\n", command);
+            break;
+    }
+    
+    send(key->fd, response, strlen(response), 0);
+    
+    selector_set_interest_key(key, OP_READ);
+    return STM_REQUEST_READ;
 }
 
 static const struct state_definition CLIENT_STATE_TABLE[] = {
@@ -207,11 +248,11 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
     {
         .state = STM_REQUEST_READ,
         .on_arrival = stm_read_arrival,
-        .on_read_ready = NULL, //CAMBIAR ESTO
+        .on_read_ready = stm_request_read,
     },
     {
         .state = STM_REQUEST_WRITE,
-        .on_write_ready = NULL, //CAMBIAR ESTO
+        .on_write_ready = stm_request_write,
     }, 
     ///
         {
@@ -268,10 +309,6 @@ void handle_read_passive(struct selector_key *key) {
 
     selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData);
 }
-
-
-
-
 
 int main(int argc, char *argv[]) {
 
