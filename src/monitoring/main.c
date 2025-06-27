@@ -33,6 +33,18 @@ struct sockaddr_storage _localAddr; // TODO: VARIABLE GLOBAL!!!!!
 void client_handler_read(struct selector_key *key);
 void client_handler_close(struct selector_key *key);
 
+char username[64];  //TODO: ESTA MAL, SACAR.
+char password[64];
+
+void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
+    printf("%s (%zu bytes): ", label, length);
+    for (size_t i = 0; i < length; i++) {
+        printf("%02X", buffer[i]);
+        if (i < length - 1) printf(" ");
+    }
+    printf("\n");
+}
+
 
 int setupTCPServerSocket(const char *service) {
 	// Construct the server address structure
@@ -121,7 +133,11 @@ void stm_read_arrival(unsigned state, struct selector_key *key) {
 enum StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    printf("String recibido: %s\n", clientData->buffer);
+    printf("String recibido: %b\n", clientData->buffer);
+    print_hex_compact("Datos recibidos", (unsigned char*)clientData->buffer, bytes);
+    char * message = clientData->buffer;
+
+    /*
 
     char *username = strtok(clientData->buffer, "|");
     char *password = strtok(NULL, "|");
@@ -147,6 +163,19 @@ enum StateSocksv5 stm_login_read(struct selector_key *key) {
         clientData->user.username[0] = '\0';
         clientData->user.password[0] = '\0';
     }
+    */
+    int index = 1;
+    int usernameLength = message[index++];
+    memcpy(username, message + index, usernameLength);
+    username[usernameLength] = '\0'; // Null-terminate the username
+    printf("Username: %s\n", username);
+    printf("Username length: %d\n", usernameLength);
+    index += usernameLength;
+    int passwordLength = message[index++];
+    memcpy(password, message + index, passwordLength);
+    password[passwordLength] = '\0'; // Null-terminate the password
+    printf("Password: %s\n", password);
+    printf("Password length: %d\n", passwordLength);
 
     selector_set_interest_key(key, OP_WRITE); 
     return STM_LOGIN_WRITE;
@@ -155,10 +184,12 @@ enum StateSocksv5 stm_login_read(struct selector_key *key) {
 enum StateSocksv5 stm_login_write(struct state_machine *stm, struct selector_key *key) {
     ClientData *clientData = key->data;
 
-    char welcomeMessage[64];
-    snprintf(welcomeMessage, sizeof(welcomeMessage), "Bienvenido al servidor, %s\n", clientData->user.username);
-    printf("%s", welcomeMessage);
-    send(key->fd, welcomeMessage, strlen(welcomeMessage), 0);
+    if(validate_login(username, password)){
+        char welcomeMessage[64];
+        snprintf(welcomeMessage, sizeof(welcomeMessage), "Bienvenido al servidor, %s\n", username);
+        printf("%s", welcomeMessage);
+        send(key->fd, welcomeMessage, strlen(welcomeMessage), 0);
+    }
 
     return STM_LOGIN_READ; // O el estado que corresponda
 }

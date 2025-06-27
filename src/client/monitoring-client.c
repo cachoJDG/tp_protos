@@ -1,4 +1,4 @@
-/*#include <string.h>
+#include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -53,7 +53,27 @@ int tcpClientSocket(const char *host, const char *service) {
 	return sock;
 }
 
-bool authClient(int clientSocket, char *clientName, char *clientPassword) {
+bool authClient(int clientSocket) {
+
+	char* token = getenv("TOKEN");
+	if (token == NULL) {
+		printf("No token provided for connection\n");
+		return -1;
+	}
+	
+	char *clientName = strtok(token, "|");
+	char *clientPassword = strtok(NULL, "|");
+
+	if (clientName == NULL || clientPassword == NULL) {
+		fprintf(stderr, "Client error: invalid token format\n");
+		return false;
+	}
+
+	if (strlen(clientName) > 255 || strlen(clientPassword) > 255) {
+		fprintf(stderr, "Client error: client name or password too long\n");
+		return false;
+	}
+
 	// TODO: sacarle el null terminated a los strings, ya que no se envían al servidor
     char message[BUFSIZE] = { 0 }; // TODO: verificar que clientName y clientPassword no excedan. BUFFER OVERFLOW
     size_t index = 0;
@@ -61,12 +81,12 @@ bool authClient(int clientSocket, char *clientName, char *clientPassword) {
 
     size_t clientNameLength = strlen(clientName);
     message[index++] = clientNameLength;
-    memcpy(&message[index], clientName, clientNameLength);
+    memcpy(message + index, clientName, clientNameLength);
     index += clientNameLength;
 
     size_t clientPasswordLength = strlen(clientPassword);
     message[index++] = clientPasswordLength;
-    memcpy(&message[index], clientPassword, clientPasswordLength);
+    memcpy(message + index, clientPassword, clientPasswordLength);
     index += clientPasswordLength;
 
     if(send(clientSocket, message, index, 0) <= ERROR_VALUE) {
@@ -92,9 +112,9 @@ bool authClient(int clientSocket, char *clientName, char *clientPassword) {
 
 int main(int argc, char *argv[]) {
 
-	if (argc != 4) {
+	/*if (argc != 4) {
 		log(FATAL, "usage: %s <Server Name/Address> <Echo Word> <Server Port/Name>", argv[0]);
-	}
+	}*/
 
 	char *server = argv[1];     // First arg: server name IP address 
 
@@ -106,35 +126,9 @@ int main(int argc, char *argv[]) {
 	if (clientSocket < 0) {
 		log(FATAL, "socket() failed")
 	}
-    bool authSuccess = authClient(clientSocket, "john", "doe");
+    bool authSuccess = authClient(clientSocket);
     printf("Client[%d]: %d\n", clientSocket, authSuccess);
-	// size_t echoStringLen = strlen(echoString); // Determine input length
-
-	// // Send the string to the server
-	// ssize_t numBytes = send(sock, echoString, echoStringLen, 0);
-	// if (numBytes < 0 || numBytes != echoStringLen)
-	// 	log(FATAL, "send() failed expected %zu sent %zu", echoStringLen, numBytes);
-
-	// // Receive the same string back from the server
-	// unsigned int totalBytesRcvd = 0; // Count of total bytes received
-	// log(INFO, "Received: ")     // Setup to print the echoed string
-	// while (totalBytesRcvd < echoStringLen && numBytes >=0) {
-	// 	char buffer[BUFSIZE]; 
-	// 	 Receive up to the buffer size (minus 1 to leave space for a null terminator) bytes from the sender 
-	// 	numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
-	// 	if (numBytes < 0) {
-	// 		log(ERROR, "recv() failed")
-	// 	}  
-	// 	else if (numBytes == 0)
-	// 		log(ERROR, "recv() connection closed prematurely")
-	// 	else {
-	// 		totalBytesRcvd += numBytes; // Keep tally of total bytes
-	// 		buffer[numBytes] = '\0';    // Terminate the string!
-	// 		log(INFO, "%s", buffer);      // Print the echo buffer
-	// 	}
-	// }
 
 	close(clientSocket);
 	return 0;
 }
-*/
