@@ -332,6 +332,8 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
             break;
     }
     clientData->outgoing_fd = sock;
+
+
     selector_set_interest_key(key, OP_READ);
     return STM_CONNECTION_TRAFFIC;
 }

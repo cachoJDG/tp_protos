@@ -2,3 +2,6 @@
 /obj
 
 .idea
+wireshark_captures.pcapng
+
+.vscode

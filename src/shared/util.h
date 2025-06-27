@@ -16,6 +16,7 @@
 #include <signal.h>
 #include "../stm.h"
 #include <pthread.h>
+#include "../buffer.h"
 
 #define BUFSIZE 1024
 
@@ -26,6 +27,10 @@ typedef struct ClientData {
     char buffer[BUFSIZE];
     ssize_t bytes;
     struct state_machine stm;
+    // ------- Alex ---------
+    buffer* client_buffer;  // buffer para almacenar datos del socket del cliente
+    buffer* outgoing_buffer; // buffer para almacenar datos del socket remoto
+
 } ClientData;
 
 typedef enum StateSocksv5 {
