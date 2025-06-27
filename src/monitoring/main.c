@@ -213,7 +213,7 @@ enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_k
     char response[1024];
     switch(command) {
         case LIST_USERS:
-            snprintf(response, sizeof(response), "Usuarios registrados: %s", getUsers());
+            snprintf(response, sizeof(response), "%s", getUsers());
             break;
         case ADD_USER:
             char * usernameToAdd = getStringFromSize(buffer + 1);
