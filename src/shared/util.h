@@ -29,7 +29,6 @@ typedef struct ClientData {
     char remoteBufferData[BUFSIZE];
     ssize_t bytes;
     struct state_machine stm;
-    // ------- Alex ---------
     buffer client_buffer;  // buffer para almacenar datos del socket del cliente
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
 

@@ -384,8 +384,11 @@ void stm_error(unsigned state, struct selector_key *key) {
 }
 
 void stm_done_arrival(unsigned state, struct selector_key *key) {
+    ClientData *clientData = key->data;
     log(DEBUG, "done");
-    selector_set_interest_key(key, OP_NOOP);
+
+    close(clientData->client_fd);
+    
 }
 
 static const struct state_definition CLIENT_STATE_TABLE[] = {
@@ -523,7 +526,7 @@ void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_read(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
-        client_handler_close(key);
+        selector_unregister_fd(key->s, key->fd);
     }
 }
 
@@ -531,24 +534,25 @@ void client_handler_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_write(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
-        client_handler_close(key);
+        selector_unregister_fd(key->s, key->fd);
     }
 }
 void client_handler_block(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_block(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
-        client_handler_close(key);
+        selector_unregister_fd(key->s, key->fd);
     }
 }
 void client_handler_close(struct selector_key *key) {
-    ClientData *clientData = key->data;
+
     // enum StateSocksv5 state = stm_handler_close(&clientData->stm, key); // este no retorna xd
     // TODO: avoid double free
-    selector_set_interest_key(key, OP_NOOP); // quiza sacar esto
-    // selector_unregister_fd(key->s, key->s);
-    log(INFO, "handling client close");
+    // selector_set_interest_key(key, OP_NOOP);
     free(key->data);
+    key->data = NULL; // Evitar que se intente liberar de nuevo
+    log(INFO, "handling client close");
+    close(key->fd); // Cerrar el socket del cliente
 }
 
 fd_handler CLIENT_HANDLER = {

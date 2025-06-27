@@ -80,15 +80,10 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
 void stm_connection_traffic_departure(const unsigned state, struct selector_key *key) {
     log(DEBUG, "stm_connection_traffic_departure called for socket %d", key->fd);
     ClientData *clientData = key->data;
-    // hacer frees acá (creo)
         
     // Close outgoing socket
     selector_unregister_fd(key->s, clientData->outgoing_fd);
-    close(clientData->outgoing_fd);
-    //TODO: OJO porque solo estuve tratando de cerrar la conexión del proxy, pero uno puede seguir hablando con el cliente
-
-    // Por ahora, decidí cerrar la conexión del cliente acá. Habría que ver qué hacer con esto
-    close(clientData->client_fd);
+    clientData->outgoing_fd = -1; // Reset outgoing_fd to indicate no active connection
 }
 
 // SOCKET REMOTO --> BUFFER REMOTO
@@ -101,7 +96,6 @@ void proxy_handler_read(struct selector_key *key) {
     if (bytesRead <= 0) {
         log(ERROR, "Error reading from socket %d: %zd", key->fd, bytesRead);
         selector_unregister_fd(key->s, key->fd);
-        close(key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
         return;
     }
@@ -125,7 +119,6 @@ void proxy_handler_write(struct selector_key *key) {
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
         selector_unregister_fd(key->s, key->fd);
-        close(key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
 
         return;
@@ -146,9 +139,11 @@ void proxy_handler_block(struct selector_key *key) {
 }
 
 void proxy_handler_close(struct selector_key *key) {
-    ClientData *proxyData = key->data;
-    log(INFO, "Closing proxy connection for client %d", proxyData->client_fd);
-    // Hacer frees específicos del outgoing_fd
-    // O sea, nada
+    if (key->data == NULL) {
+        log(ERROR, "proxy_handler_close called with NULL data");
+        return;
+    }
+    log(INFO, "Closing proxy connection for proxy %d", key->fd);
+    close(key->fd);
 }
 
