@@ -22,19 +22,8 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     int clientSocket = key->fd;
     int remoteSocket = clientData->outgoing_fd;
 
-
-    clientData->client_buffer = malloc(sizeof(struct buffer));
-    clientData->outgoing_buffer = malloc(sizeof(struct buffer));
-
-
-    uint8_t *clientBufferData = calloc(BUFSIZE, sizeof(uint8_t));
-    uint8_t *remoteBufferData = calloc(BUFSIZE, sizeof(uint8_t));
-
-
-    log(DEBUG, "client buffer: %p, remote buffer: %p", (void*)clientData->client_buffer, (void*)clientData->outgoing_buffer);
-
-    buffer_init(clientData->client_buffer, BUFSIZE, clientBufferData);
-    buffer_init(clientData->outgoing_buffer, BUFSIZE, remoteBufferData);
+    buffer_init(&clientData->client_buffer, BUFSIZE, clientData->clientBufferData);
+    buffer_init(&clientData->outgoing_buffer, BUFSIZE, clientData->remoteBufferData);
 
     // Los buffers se comparten entre el cliente y el servidor remoto
     selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, key->data); // Comparto el contexto
@@ -44,14 +33,14 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
 unsigned stm_connection_traffic_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t readable;
-    uint8_t *read_ptr = buffer_read_ptr(clientData->outgoing_buffer, &readable);
+    uint8_t *read_ptr = buffer_read_ptr(&clientData->outgoing_buffer, &readable);
     ssize_t bytesWritten = send(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
         return STM_DONE;
     }
-    buffer_read_adv(clientData->outgoing_buffer, bytesWritten);
-    if (buffer_can_read(clientData->outgoing_buffer)) {
+    buffer_read_adv(&clientData->outgoing_buffer, bytesWritten);
+    if (buffer_can_read(&clientData->outgoing_buffer)) {
         selector_set_interest(key->s, clientData->client_fd, OP_READ | OP_WRITE);
     } else {
         selector_set_interest(key->s, clientData->client_fd, OP_READ);
@@ -65,7 +54,7 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
 unsigned stm_connection_traffic_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t available;
-    uint8_t *write_ptr = buffer_write_ptr(clientData->client_buffer, &available);
+    uint8_t *write_ptr = buffer_write_ptr(&clientData->client_buffer, &available);
 
     ssize_t bytesRead = recv(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
@@ -78,8 +67,8 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
         return STM_DONE;
     }
 
-    buffer_write_adv(clientData->client_buffer, bytesRead);
-    if (buffer_can_read(clientData->client_buffer)) {
+    buffer_write_adv(&clientData->client_buffer, bytesRead);
+    if (buffer_can_read(&clientData->client_buffer)) {
         selector_set_interest(key->s, clientData->outgoing_fd, OP_READ | OP_WRITE);
     } else {
         selector_set_interest(key->s, clientData->outgoing_fd, OP_READ);
@@ -96,13 +85,6 @@ void stm_connection_traffic_departure(const unsigned state, struct selector_key 
     // Close outgoing socket
     selector_unregister_fd(key->s, clientData->outgoing_fd);
     close(clientData->outgoing_fd);
-
-    // Free allocated shared buffers
-    free(clientData->client_buffer->data);
-    free(clientData->outgoing_buffer->data);
-    free(clientData->client_buffer);
-    free(clientData->outgoing_buffer);
-
     //TODO: OJO porque solo estuve tratando de cerrar la conexión del proxy, pero uno puede seguir hablando con el cliente
 
     // Por ahora, decidí cerrar la conexión del cliente acá. Habría que ver qué hacer con esto
@@ -113,7 +95,7 @@ void stm_connection_traffic_departure(const unsigned state, struct selector_key 
 void proxy_handler_read(struct selector_key *key) {
     ClientData *proxyData = key->data;
     size_t available;
-    uint8_t *write_ptr = buffer_write_ptr(proxyData->outgoing_buffer, &available);
+    uint8_t *write_ptr = buffer_write_ptr(&proxyData->outgoing_buffer, &available);
 
     ssize_t bytesRead = recv(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
@@ -124,8 +106,8 @@ void proxy_handler_read(struct selector_key *key) {
         return;
     }
 
-    buffer_write_adv(proxyData->outgoing_buffer, bytesRead);
-    if (buffer_can_read(proxyData->outgoing_buffer)) {
+    buffer_write_adv(&proxyData->outgoing_buffer, bytesRead);
+    if (buffer_can_read(&proxyData->outgoing_buffer)) {
         selector_set_interest(key->s, proxyData->client_fd, OP_READ | OP_WRITE);
     } else {
         selector_set_interest(key->s, proxyData->client_fd, OP_READ);
@@ -138,7 +120,7 @@ void proxy_handler_read(struct selector_key *key) {
 void proxy_handler_write(struct selector_key *key) {
     ClientData *proxyData = key->data;
     size_t readable;
-    uint8_t *read_ptr = buffer_read_ptr(proxyData->client_buffer, &readable);
+    uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
     ssize_t bytesWritten = send(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
@@ -148,8 +130,8 @@ void proxy_handler_write(struct selector_key *key) {
 
         return;
     }
-    buffer_read_adv(proxyData->client_buffer, bytesWritten);
-    if (buffer_can_read(proxyData->client_buffer)) {
+    buffer_read_adv(&proxyData->client_buffer, bytesWritten);
+    if (buffer_can_read(&proxyData->client_buffer)) {
         selector_set_interest(key->s, proxyData->outgoing_fd, OP_READ | OP_WRITE);
     } else {
         selector_set_interest(key->s, proxyData->outgoing_fd, OP_READ);
@@ -168,5 +150,5 @@ void proxy_handler_close(struct selector_key *key) {
     log(INFO, "Closing proxy connection for client %d", proxyData->client_fd);
     // Hacer frees específicos del outgoing_fd
     // O sea, nada
-    }
+}
 

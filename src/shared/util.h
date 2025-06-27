@@ -25,11 +25,13 @@ typedef struct ClientData {
     int           outgoing_fd; 
     struct addrinfo *connectAddresses;
     char buffer[BUFSIZE];
+    char clientBufferData[BUFSIZE];
+    char remoteBufferData[BUFSIZE];
     ssize_t bytes;
     struct state_machine stm;
     // ------- Alex ---------
-    buffer* client_buffer;  // buffer para almacenar datos del socket del cliente
-    buffer* outgoing_buffer; // buffer para almacenar datos del socket remoto
+    buffer client_buffer;  // buffer para almacenar datos del socket del cliente
+    buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
 
 } ClientData;
 

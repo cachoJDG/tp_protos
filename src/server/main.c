@@ -522,7 +522,7 @@ int acceptTCPConnection(int servSock) {
 void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_read(&clientData->stm, key);
-    if(state == STM_ERROR) {
+    if(state == STM_ERROR || state == STM_DONE) {
         client_handler_close(key);
     }
 }
@@ -530,14 +530,14 @@ void client_handler_read(struct selector_key *key) {
 void client_handler_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_write(&clientData->stm, key);
-    if(state == STM_ERROR) {
+    if(state == STM_ERROR || state == STM_DONE) {
         client_handler_close(key);
     }
 }
 void client_handler_block(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_block(&clientData->stm, key);
-    if(state == STM_ERROR) {
+    if(state == STM_ERROR || state == STM_DONE) {
         client_handler_close(key);
     }
 }
