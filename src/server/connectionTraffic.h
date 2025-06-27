@@ -14,4 +14,9 @@ unsigned stm_connection_traffic_write(struct selector_key *key);
 unsigned stm_connection_traffic_read(struct selector_key *key);
 void stm_connection_traffic_departure(const unsigned state, struct selector_key *key);
 
+void proxy_handler_read(struct selector_key *key);
+void proxy_handler_write(struct selector_key *key);
+void proxy_handler_block(struct selector_key *key);
+void proxy_handler_close(struct selector_key *key);
+
 #endif

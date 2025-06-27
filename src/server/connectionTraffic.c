@@ -5,17 +5,7 @@
 #include <stdio.h>
 #include "../buffer.h"
 
-typedef struct ProxyData {
-    int           client_fd;    // descriptor del socket del cliente SOCKS
-    int           outgoing_fd; 
-    struct buffer* client_buffer;  // buffer para almacenar datos del socket del cliente
-    struct buffer* outgoing_buffer; // buffer para almacenar datos del socket remoto
-} ProxyData;
 
-void proxy_handler_read(struct selector_key *key);
-void proxy_handler_write(struct selector_key *key);
-void proxy_handler_block(struct selector_key *key);
-void proxy_handler_close(struct selector_key *key);
 
 fd_handler PROXY_HANDLER = {
     .handle_read = proxy_handler_read,
@@ -28,12 +18,10 @@ fd_handler PROXY_HANDLER = {
 void stm_connection_traffic_arrival(const unsigned state, struct selector_key *key) {
     log(DEBUG, "stm_connection_traffic_arrival called for socket %d", key->fd);
     ClientData *clientData = key->data; 
-    ssize_t received; /////////////////////////////////////////////
+
     int clientSocket = key->fd;
     int remoteSocket = clientData->outgoing_fd;
 
-    // add the new socket to the selector
-    ProxyData *proxyData = calloc(1, sizeof(ProxyData)); 
 
     clientData->client_buffer = malloc(sizeof(struct buffer));
     clientData->outgoing_buffer = malloc(sizeof(struct buffer));
@@ -49,14 +37,7 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     buffer_init(clientData->outgoing_buffer, BUFSIZE, remoteBufferData);
 
     // Los buffers se comparten entre el cliente y el servidor remoto
-
-    proxyData->client_fd   = clientSocket;
-    proxyData->outgoing_fd = remoteSocket;
-
-    proxyData->client_buffer = clientData->client_buffer;
-    proxyData->outgoing_buffer = clientData->outgoing_buffer;
-
-    selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, (void *)proxyData);
+    selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, key->data); // Comparto el contexto
 }
 
 // BUFFER CLIENTE --> SOCKET REMOTO
@@ -113,6 +94,7 @@ void stm_connection_traffic_departure(const unsigned state, struct selector_key 
     // hacer frees acá (creo)
         
     // Close outgoing socket
+    selector_unregister_fd(key->s, clientData->outgoing_fd);
     close(clientData->outgoing_fd);
 
     // Free allocated shared buffers
@@ -129,13 +111,14 @@ void stm_connection_traffic_departure(const unsigned state, struct selector_key 
 
 // SOCKET REMOTO --> BUFFER REMOTO
 void proxy_handler_read(struct selector_key *key) {
-    ProxyData *proxyData = key->data;
+    ClientData *proxyData = key->data;
     size_t available;
     uint8_t *write_ptr = buffer_write_ptr(proxyData->outgoing_buffer, &available);
 
     ssize_t bytesRead = recv(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         log(ERROR, "Error reading from socket %d: %zd", key->fd, bytesRead);
+        selector_unregister_fd(key->s, key->fd);
         close(key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
         return;
@@ -153,12 +136,13 @@ void proxy_handler_read(struct selector_key *key) {
 
 // BUFFER REMOTO --> SOCKET CLIENTE
 void proxy_handler_write(struct selector_key *key) {
-    ProxyData *proxyData = key->data;
+    ClientData *proxyData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(proxyData->client_buffer, &readable);
     ssize_t bytesWritten = send(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
+        selector_unregister_fd(key->s, key->fd);
         close(key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
 
@@ -180,14 +164,9 @@ void proxy_handler_block(struct selector_key *key) {
 }
 
 void proxy_handler_close(struct selector_key *key) {
-    ProxyData *proxyData = key->data;
+    ClientData *proxyData = key->data;
     log(INFO, "Closing proxy connection for client %d", proxyData->client_fd);
     // Hacer frees específicos del outgoing_fd
-
-    // Free the ProxyData structure
-    free(proxyData);
-    
-    // Unregister the file descriptor from the selector
-    selector_unregister_fd(key->s, key->fd);
-}
+    // O sea, nada
+    }
 
