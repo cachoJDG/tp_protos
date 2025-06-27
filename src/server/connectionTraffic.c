@@ -1,4 +1,4 @@
-#include "./connectionTraffic.h"
+#include "connectionTraffic.h"
 #include <poll.h>
 #include "./../shared/logger.h"
 #include "./../shared/util.h"
@@ -8,11 +8,8 @@
 typedef struct ProxyData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
     int           outgoing_fd; 
-    struct addrinfo *connectAddresses;
     struct buffer* client_buffer;  // buffer para almacenar datos del socket del cliente
     struct buffer* outgoing_buffer; // buffer para almacenar datos del socket remoto
-    ssize_t bytes;
-    // struct state_machine stm;
 } ProxyData;
 
 void proxy_handler_read(struct selector_key *key);
@@ -30,13 +27,11 @@ fd_handler PROXY_HANDLER = {
 // Acá va la parte de crear el nuevo socket (salvo que ya esté creado)
 void stm_connection_traffic_arrival(const unsigned state, struct selector_key *key) {
     log(DEBUG, "stm_connection_traffic_arrival called for socket %d", key->fd);
-    ClientData *clientData = key->data; // TODO(alex): hacer que esto este separado en las 4 funciones sin usar poll()
+    ClientData *clientData = key->data; 
     ssize_t received; /////////////////////////////////////////////
     int clientSocket = key->fd;
     int remoteSocket = clientData->outgoing_fd;
-    // char receiveBuffer[4096];
 
-    // ------------- NEW -------------
     // add the new socket to the selector
     ProxyData *proxyData = calloc(1, sizeof(ProxyData)); 
 
@@ -62,46 +57,9 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     proxyData->outgoing_buffer = clientData->outgoing_buffer;
 
     selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, (void *)proxyData);
-
-    // ------------- OLD -------------
-
-    // Create poll structures to say we are waiting for bytes to read on both sockets.
-    // struct pollfd pollFds[2];
-    // pollFds[0].fd = clientSocket;
-    // pollFds[0].events = POLLIN;
-    // pollFds[0].revents = 0;
-    // pollFds[1].fd = remoteSocket;
-    // pollFds[1].events = POLLIN;
-    // pollFds[1].revents = 0;
-    
-    // What comes in through clientSocket, we send to remoteSocket. What comes in through remoteSocket, we send to clientSocket.
-    // This gets repeated until either the client or remote server closes the connection, at which point we close both connections.
-    // int alive = 1;
-    // do {
-    //     int pollResult = poll(pollFds, 2, -1);
-    //     if (pollResult < 0) {
-    //         log(ERROR, "Poll returned %d: ", pollResult);
-    //         perror(NULL);
-    //         return;
-    //         // return -1;
-    //     }
-
-    //     for (int i = 0; i < 2 && alive; i++) {
-    //         if (pollFds[i].revents == 0)
-    //             continue;
-
-    //         received = recv(pollFds[i].fd, receiveBuffer, sizeof(receiveBuffer), 0);
-    //         if (received <= 0) {
-    //             alive = 0;
-    //         } else {
-    //             int otherSocket = pollFds[i].fd == clientSocket ? remoteSocket : clientSocket;
-    //             send(otherSocket, receiveBuffer, received, 0);
-    //         }
-    //     }
-    // } while (alive);
 }
 
-// Esto no debería hacer nada (de última, debería devolver el mismo estado de antes). Si bien el write podría estar habilitado, no hay nada por escribir
+// BUFFER CLIENTE --> SOCKET REMOTO
 unsigned stm_connection_traffic_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t readable;
@@ -122,7 +80,7 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     return STM_CONNECTION_TRAFFIC;
 }
 
-// Esto debería enviar datos al servidor
+// SOCKET CLIENTE --> BUFFER CLIENTE
 unsigned stm_connection_traffic_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t available;
@@ -136,7 +94,7 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
             log(ERROR, "Error reading from socket %d: %s", key->fd, strerror(errno));
         }
         
-        return STM_DONE; // or another appropriate terminal state
+        return STM_DONE;
     }
 
     buffer_write_adv(clientData->client_buffer, bytesRead);
@@ -148,6 +106,7 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     log(DEBUG, "Received %zd bytes from socket %d [CLIENT]", bytesRead, key->fd);
     return STM_CONNECTION_TRAFFIC;
 }
+
 void stm_connection_traffic_departure(const unsigned state, struct selector_key *key) {
     log(DEBUG, "stm_connection_traffic_departure called for socket %d", key->fd);
     ClientData *clientData = key->data;
@@ -168,6 +127,7 @@ void stm_connection_traffic_departure(const unsigned state, struct selector_key 
     close(clientData->client_fd);
 }
 
+// SOCKET REMOTO --> BUFFER REMOTO
 void proxy_handler_read(struct selector_key *key) {
     ProxyData *proxyData = key->data;
     size_t available;
@@ -177,6 +137,7 @@ void proxy_handler_read(struct selector_key *key) {
     if (bytesRead <= 0) {
         log(ERROR, "Error reading from socket %d: %zd", key->fd, bytesRead);
         close(key->fd);
+        // TODO: avisarle al cliente que se cerró la conexión
         return;
     }
 
@@ -190,6 +151,7 @@ void proxy_handler_read(struct selector_key *key) {
     log(DEBUG, "Received %zd bytes from socket %d [REMOTE]", bytesRead, key->fd);
 }
 
+// BUFFER REMOTO --> SOCKET CLIENTE
 void proxy_handler_write(struct selector_key *key) {
     ProxyData *proxyData = key->data;
     size_t readable;
@@ -198,6 +160,8 @@ void proxy_handler_write(struct selector_key *key) {
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
         close(key->fd);
+        // TODO: avisarle al cliente que se cerró la conexión
+
         return;
     }
     buffer_read_adv(proxyData->client_buffer, bytesWritten);
@@ -212,11 +176,9 @@ void proxy_handler_write(struct selector_key *key) {
 }
 
 void proxy_handler_block(struct selector_key *key) {
-    // Aquí podrías manejar el caso de bloqueo si es necesario
     log(DEBUG, "Block Handler called for socket %d", key->fd);
 }
 
-// Hecho con IA
 void proxy_handler_close(struct selector_key *key) {
     ProxyData *proxyData = key->data;
     log(INFO, "Closing proxy connection for client %d", proxyData->client_fd);
