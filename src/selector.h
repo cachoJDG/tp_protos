@@ -132,6 +132,7 @@ typedef struct fd_handler {
    * llamado cuando se se desregistra el fd
    * Seguramente deba liberar los recusos alocados en data.
    */
+  // OJO: handle_close se llama cuando se hace "selector_unregister_fd" Y NO CUANDO SE CIERRA EL SOCKET.
   void (*handle_close)     (struct selector_key *key);
 
 } fd_handler;
