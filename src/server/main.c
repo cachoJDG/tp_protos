@@ -44,7 +44,7 @@ typedef enum AddressTypeSocksv5 {
 typedef struct {
     char host[256];
     char service[6];
-    struct addrinfo *result;  // aquí guardamos la lista devuelta
+    struct addrinfo **result;  // aquí guardamos la lista devuelta
     fd_selector     selector;
     int             client_fd;
 } DnsJob;
@@ -52,11 +52,11 @@ typedef struct {
 
 void *dns_thread_func(void *arg) {
     DnsJob *job = (DnsJob *)arg;
-    if (dns_solve_addr(job->host, job->service, &job->result) == 0) {
+    if (dns_solve_addr(job->host, job->service, job->result) == 0) {
         struct addrinfo *p;
         char ipstr[INET6_ADDRSTRLEN];
 
-        for (p = job->result; p != NULL; p = p->ai_next) {
+        for (p = *job->result; p != NULL; p = p->ai_next) {
             void *addr;
             if (p->ai_family == AF_INET) {
                 addr = &((struct sockaddr_in *)p->ai_addr)->sin_addr;
@@ -64,15 +64,14 @@ void *dns_thread_func(void *arg) {
                 addr = &((struct sockaddr_in6 *)p->ai_addr)->sin6_addr;
             }
             inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
-            printf("DNS resuelto para %s:%s -> %s\n", job->host, job->service, ipstr);
-            //TODO llamar al selector aca ya esta la info resuelta
+            log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
         }
 
-        freeaddrinfo(job->result);
     } else {
-        printf("Error al resolver DNS para %s:%s\n", job->host, job->service);
+        log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
     }
     free(job);
+    selector_notify_block(job->selector, job->client_fd);
     return NULL;
 }
 
@@ -197,18 +196,35 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
             break;
         }
-        case SOCKSV5_ADDR_TYPE_DOMAIN_NAME:
+        case SOCKSV5_ADDR_TYPE_DOMAIN_NAME: {
+            DnsJob *job = calloc(1, sizeof(*job));
+            if (!job) {
+                log(ERROR, "malloc: %s", strerror(errno));
+                return STM_ERROR;
+            }
             size_t domainNameSize = clientData->buffer[index++];
-            char domainName[256] = {0};
-            memcpy(domainName, &clientData->buffer[index], domainNameSize);
-            memcpy(hostname, &clientData->buffer[index], domainNameSize);
-            domainName[domainNameSize] = '\0';
+            strncpy(job->host, &clientData->buffer[index], sizeof(job->host) - 1);
             index += domainNameSize;
 
             destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
             index += 2;
 
-            break;
+            pthread_t tid;
+            snprintf(job->service, sizeof(job->service) - 1, "%u", destinationPort);
+
+            job->result = &clientData->connectAddresses;
+            job->client_fd = clientData->client_fd;
+            job->selector = key->s;
+
+            if (pthread_create(&tid, NULL, dns_thread_func, job) != 0) {
+                log(ERROR, "pthread_create: %s", strerror(errno));
+                free(job);
+                return STM_ERROR;
+            }
+            pthread_detach(tid);
+
+            return STM_DNS_DONE;
+        }
         case SOCKSV5_ADDR_TYPE_IPV6: {
             addrHints.ai_family = AF_INET6;
             struct in6_addr addr;
@@ -223,26 +239,28 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             send(key->fd, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
     }
-
-    pthread_t tid;
-    char service[6];
-    snprintf(service, sizeof(service), "%u", destinationPort);
-
-    DnsJob *job = malloc(sizeof(*job));
-    if (!job) {
-        log(ERROR, "malloc: %s", strerror(errno));
+    char service[6] = {0};
+    sprintf(service, "%d", destinationPort);
+    
+    // uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
+    index += 2;
+    int getAddrStatus = getaddrinfo(hostname, service, &addrHints, &clientData->connectAddresses);
+    if(getAddrStatus != 0) {
+        log(ERROR, "getaddrinfo() failed");
+        // The reply specifies ATYP as IPv4 and BND as 0.0.0.0:0.
+        char errorMessage[10] = "\x05 \x00\x01\x00\x00\x00\x00\x00\x00";
+        // We calculate the REP value based on the type of error returned by getaddrinfo
+        errorMessage[1] =
+            getAddrStatus == EAI_FAMILY   ? '\x08'  // REP is "Address type not supported"
+            : getAddrStatus == EAI_NONAME ? '\x04'  // REP is "Host Unreachable"
+                                          : '\x01'; // REP is "General SOCKS server failure"
+        send(key->fd, errorMessage, 10, 0);
         return STM_ERROR;
     }
-    strncpy(job->host, hostname, sizeof(job->host) - 1);
-    strncpy(job->service, service,  sizeof(job->service) - 1);
-    job->result = NULL;
+    log(DEBUG, "cmd=%d addressType=%d destinationPort=%u", cmd, addressType, destinationPort);
 
-    if (pthread_create(&tid, NULL, dns_thread_func, job) != 0) {
-        log(ERROR, "pthread_create: %s", strerror(errno));
-        free(job);
-        return STM_ERROR;
-    }
-    pthread_detach(tid);
+    selector_set_interest_key(key, OP_WRITE); 
+
     return STM_REQUEST_WRITE;
 }
 
@@ -319,7 +337,7 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
             break;
     }
     clientData->outgoing_fd = sock;
-
+    freeaddrinfo(clientData->connectAddresses);
 
     selector_set_interest_key(key, OP_READ);
     return STM_CONNECTION_TRAFFIC;
@@ -327,37 +345,37 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
 
 StateSocksv5 stm_dns_done(struct selector_key *key) {
     ClientData *clientData = key->data; 
-    // TODO(GAGO): aca procesar el dns  
-    int err = 0;
-    socklen_t len = sizeof(err);
-    if (getsockopt(clientData->outgoing_fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
-        log(ERROR, "connect() failed: %s", strerror(err));
+    // // TODO(GAGO): aca procesar el dns  
+    // int err = 0;
+    // socklen_t len = sizeof(err);
+    // if (getsockopt(clientData->outgoing_fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0) {
+    //     log(ERROR, "connect() failed: %s", strerror(err));
         
-        //todo chequear si esto esta bien como respuesta de ok
-        char reply_err[10] = { 
-            0x05,       // VERSION
-            0x05,       // REP = connection refused
-            0x00,       // RSV
-            0x01, 0,0,0,0,  // ATYP=IPv4 + BND.ADDR = 0.0.0.0
-            0,0         // BND.PORT = 0
-        };
-        send(clientData->client_fd, reply_err, sizeof(reply_err), 0);
-        close(clientData->outgoing_fd);
-        return STM_ERROR;
-    }
+    //     //todo chequear si esto esta bien como respuesta de ok
+    //     char reply_err[10] = { 
+    //         0x05,       // VERSION
+    //         0x05,       // REP = connection refused
+    //         0x00,       // RSV
+    //         0x01, 0,0,0,0,  // ATYP=IPv4 + BND.ADDR = 0.0.0.0
+    //         0,0         // BND.PORT = 0
+    //     };
+    //     send(clientData->client_fd, reply_err, sizeof(reply_err), 0);
+    //     close(clientData->outgoing_fd);
+    //     return STM_ERROR;
+    // }
 
-    //todo chequear si esto esta bien como respuesta de ok
-    char reply_ok[10] = {
-        0x05,       
-        0x00,       // REP = succeeded
-        0x00,       
-        0x01, 0,0,0,0, 
-        0,0        
-    };
-    send(clientData->client_fd, reply_ok, sizeof(reply_ok), 0);
+    // //todo chequear si esto esta bien como respuesta de ok
+    // char reply_ok[10] = {
+    //     0x05,       
+    //     0x00,       // REP = succeeded
+    //     0x00,       
+    //     0x01, 0,0,0,0, 
+    //     0,0        
+    // };
+    // send(clientData->client_fd, reply_ok, sizeof(reply_ok), 0);
 
-    selector_set_interest_key(key, OP_READ);
-    selector_set_interest(key->s, clientData->client_fd, OP_READ);
+    // selector_set_interest_key(key, OP_READ);
+    selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
 
     return STM_REQUEST_WRITE;
 }
