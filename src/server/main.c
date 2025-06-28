@@ -27,8 +27,6 @@ map hashmap = NULL; // Global hashmap to store user credentials
 void client_handler_read(struct selector_key *key);
 void client_handler_close(struct selector_key *key);
 
-
-
 typedef enum CommandSocksv5 {
     CMD_CONNECT = 0x01,
     CMD_BIND = 0x02,
@@ -41,27 +39,38 @@ typedef enum AddressTypeSocksv5 {
     SOCKSV5_ADDR_TYPE_IPV6 = 0x04
 } AddressTypeSocksv5;
 
+
+// todo pasar este struct y esta funcion al dns_resolver de alguna manera
 typedef struct {
-    char     host[256];
-    char     service[6];
-    fd_selector selector;
-    void    *client_data;
+    char host[256];
+    char service[6];
+    struct addrinfo *result;  // aquí guardamos la lista devuelta
+    fd_selector     selector;
+    int             client_fd;
 } DnsJob;
 
-static void *dns_thread_func(void *arg) {
-    DnsJob *job = arg;
-    int out_fd = dns_connect(job->host, job->service);
-    if (out_fd >= 0) {
-        ((ClientData*)job->client_data)->outgoing_fd = out_fd;
-        selector_register(
-            job->selector,
-            out_fd,
-            &CLIENT_HANDLER,        
-            OP_WRITE,               // esperamos a que connect() termine, deberia ir algo del estilo OP_WRITE
-            job->client_data
-        );
+
+void *dns_thread_func(void *arg) {
+    DnsJob *job = (DnsJob *)arg;
+    if (dns_solve_addr(job->host, job->service, &job->result) == 0) {
+        struct addrinfo *p;
+        char ipstr[INET6_ADDRSTRLEN];
+
+        for (p = job->result; p != NULL; p = p->ai_next) {
+            void *addr;
+            if (p->ai_family == AF_INET) {
+                addr = &((struct sockaddr_in *)p->ai_addr)->sin_addr;
+            } else {  // AF_INET6
+                addr = &((struct sockaddr_in6 *)p->ai_addr)->sin6_addr;
+            }
+            inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
+            printf("DNS resuelto para %s:%s -> %s\n", job->host, job->service, ipstr);
+            //TODO llamar al selector aca ya esta la info resuelta
+        }
+
+        freeaddrinfo(job->result);
     } else {
-        // todo marcar error en client_data 
+        printf("Error al resolver DNS para %s:%s\n", job->host, job->service);
     }
     free(job);
     return NULL;
@@ -199,26 +208,6 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
             index += 2;
 
-            // printf("destAddress[%zu]='%s' port=%u\n", domainNameSize, domainName, destinationPort);
-            // fflush(stdout);
-
-            // char service_str[6];
-            // snprintf(service_str, sizeof(service_str), "%u", port);
-
-            // DnsJob *job = malloc(sizeof(*job));
-            // strcpy(job->host, domainName);
-            // strcpy(job->service, service_str);
-            // job->selector    = key->s;
-            // job->client_data = key->data;
-
-            // pthread_t tid;
-            // pthread_create(&tid, NULL, dns_thread_func, job);
-            // pthread_detach(tid);
-
-            // TODO(GAGO): llamar aca al thread de DNS. guardado en domainName con su domainNameSize
-            // la respuesta se procesa en la funcion  stm_dns_done() que es el siguiente estado
-
-            // return STM_DNS_DONE;
             break;
         case SOCKSV5_ADDR_TYPE_IPV6: {
             addrHints.ai_family = AF_INET6;
@@ -235,27 +224,25 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
             return STM_ERROR;
     }
 
-    char service[6] = {0};
-    sprintf(service, "%d", destinationPort);
-    
-    // uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
-    index += 2;
-    int getAddrStatus = getaddrinfo(hostname, service, &addrHints, &clientData->connectAddresses);
-    if(getAddrStatus != 0) {
-        log(ERROR, "getaddrinfo() failed");
-        // The reply specifies ATYP as IPv4 and BND as 0.0.0.0:0.
-        char errorMessage[10] = "\x05 \x00\x01\x00\x00\x00\x00\x00\x00";
-        // We calculate the REP value based on the type of error returned by getaddrinfo
-        errorMessage[1] =
-            getAddrStatus == EAI_FAMILY   ? '\x08'  // REP is "Address type not supported"
-            : getAddrStatus == EAI_NONAME ? '\x04'  // REP is "Host Unreachable"
-                                          : '\x01'; // REP is "General SOCKS server failure"
-        send(key->fd, errorMessage, 10, 0);
+    pthread_t tid;
+    char service[6];
+    snprintf(service, sizeof(service), "%u", destinationPort);
+
+    DnsJob *job = malloc(sizeof(*job));
+    if (!job) {
+        log(ERROR, "malloc: %s", strerror(errno));
         return STM_ERROR;
     }
-    log(DEBUG, "cmd=%d addressType=%d destinationPort=%u", cmd, addressType, destinationPort);
+    strncpy(job->host, hostname, sizeof(job->host) - 1);
+    strncpy(job->service, service,  sizeof(job->service) - 1);
+    job->result = NULL;
 
-    selector_set_interest_key(key, OP_WRITE); 
+    if (pthread_create(&tid, NULL, dns_thread_func, job) != 0) {
+        log(ERROR, "pthread_create: %s", strerror(errno));
+        free(job);
+        return STM_ERROR;
+    }
+    pthread_detach(tid);
     return STM_REQUEST_WRITE;
 }
 
