@@ -20,6 +20,13 @@
 
 #define BUFSIZE 1024
 
+typedef enum AuthMethod {
+    AUTH_NONE = 0x00,
+    AUTH_GSSAPI = 0x01,
+    AUTH_USER_PASSWORD = 0x02,
+    AUTH_NO_ACCEPTABLE = 0xFF
+} AuthMethod;
+
 typedef struct ClientData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
     int           outgoing_fd; 
@@ -31,7 +38,9 @@ typedef struct ClientData {
     struct state_machine stm;
     buffer client_buffer;  // buffer para almacenar datos del socket del cliente
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
-
+    // parsing
+    AuthMethod authMethod;
+    //
 } ClientData;
 
 typedef enum StateSocksv5 {
@@ -41,7 +50,7 @@ typedef enum StateSocksv5 {
     STM_LOGIN_WRITE,
     STM_REQUEST_READ,
     STM_REQUEST_WRITE,
-    STM_REQUEST_CONNECT,
+    STM_CONNECT_ATTEMPT,
     STM_CONNECTION_TRAFFIC,
     STM_DNS_DONE,
     STM_DONE,

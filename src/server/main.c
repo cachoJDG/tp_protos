@@ -26,6 +26,7 @@ extern fd_handler CLIENT_HANDLER;
 map hashmap = NULL; // Global hashmap to store user credentials
 void client_handler_read(struct selector_key *key);
 void client_handler_close(struct selector_key *key);
+StateSocksv5 beginConnection(struct selector_key *key);
 
 typedef enum CommandSocksv5 {
     CMD_CONNECT = 0x01,
@@ -69,6 +70,7 @@ void *dns_thread_func(void *arg) {
 
     } else {
         log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
+        job->result = NULL;
     }
     free(job);
     selector_notify_block(job->selector, job->client_fd);
@@ -90,14 +92,21 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 
     int index = 0;
     int version = clientData->buffer[index++];
-    int methodCount = clientData->buffer[index++];
+    uint8_t methodCount = clientData->buffer[index++];
 
-    char buffer[BUFSIZE] = {0};
-    int string_index = 0;
+    clientData->authMethod = AUTH_NO_ACCEPTABLE;
     for(int i = 0; i < methodCount; i++) {
-        string_index += sprintf(&buffer[string_index], "%d, ", clientData->buffer[index++]);
+        AuthMethod authMethod = clientData->buffer[index++];
+        if(authMethod == AUTH_USER_PASSWORD) {
+            clientData->authMethod = AUTH_USER_PASSWORD;
+        }
+        else if(authMethod == AUTH_NONE && clientData->authMethod == AUTH_NO_ACCEPTABLE) {
+            clientData->authMethod = AUTH_NONE;
+        }
     }
-    log(DEBUG, "version=%d methods[%d]=%s", version, methodCount, buffer);
+    char *authStr = (clientData->authMethod == AUTH_USER_PASSWORD) ? "user password" 
+                  : ((clientData->authMethod == AUTH_NONE) ? "none" : "invalid");
+    log(DEBUG, "version=%d method='%s'", version, authStr);
 
     selector_set_interest_key(key, OP_WRITE); 
 
@@ -107,12 +116,20 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
-    ssize_t bytes = send(key->fd, "\x05\x02", 2, 0); // 0x02 = LOGIN
-    selector_set_interest_key(key, OP_READ); 
-    return STM_LOGIN_READ;
-
-    // TODO: falta el caso de que el cliente haya seleccionado METHOD=NONE=0x00
-    // return STM_REQUEST_READ;
+    ssize_t bytes = 0;
+    switch (clientData->authMethod)
+    {
+    case AUTH_NONE:
+        send(key->fd, "\x05\x00", 2, 0);
+        selector_set_interest_key(key, OP_READ); 
+        return STM_REQUEST_READ;
+    case AUTH_USER_PASSWORD:
+        send(key->fd, "\x05\x02", 2, 0);
+        selector_set_interest_key(key, OP_READ); 
+        return STM_LOGIN_READ;
+    default:
+        return STM_ERROR;
+    }
 }
 
 void stm_login_read_arrival(unsigned state, struct selector_key *key) {
@@ -126,11 +143,11 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
 
     int index = 1;
-    int usernameLen = clientData->buffer[index++];
+    uint8_t usernameLen = clientData->buffer[index++];
     memcpy(message, &clientData->buffer[index], usernameLen);
     message[usernameLen] = '\0';
     index += usernameLen;
-    int passwordLen = clientData->buffer[index++];
+    uint8_t passwordLen = clientData->buffer[index++];
     memcpy(&message[usernameLen+1], &clientData->buffer[index], passwordLen);
     message[usernameLen + passwordLen + 1] = '\0';
     log(DEBUG, "username[%d]='%s' password[%d]='%s'", usernameLen, message, passwordLen, &message[usernameLen+1]);
@@ -143,6 +160,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
     ssize_t bytes = send(key->fd, "\x05\x00", 2, 0);
+    // ssize_t bytes = send(key->fd, "\x05\x01", 2, 0); // si esta mal el usuario
 
     selector_set_interest_key(key, OP_READ); 
     return STM_REQUEST_READ;
@@ -248,7 +266,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
     if(getAddrStatus != 0) {
         log(ERROR, "getaddrinfo() failed");
         // The reply specifies ATYP as IPv4 and BND as 0.0.0.0:0.
-        char errorMessage[10] = "\x05 \x00\x01\x00\x00\x00\x00\x00\x00";
+        char errorMessage[10] = "\x05\x00\x01\x00\x00\x00\x00\x00\x00";
         // We calculate the REP value based on the type of error returned by getaddrinfo
         errorMessage[1] =
             getAddrStatus == EAI_FAMILY   ? '\x08'  // REP is "Address type not supported"
@@ -261,86 +279,44 @@ StateSocksv5 stm_request_read(struct selector_key *key) { // TODO: este de aca t
 
     selector_set_interest_key(key, OP_WRITE); 
 
-    return STM_REQUEST_WRITE;
+    return beginConnection(key);
 }
 
+StateSocksv5 beginConnection(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    char addrBuffer[128] = {0};
+    
+    for (struct addrinfo* addr = clientData->connectAddresses; addr != NULL && clientData->outgoing_fd == -1; addr = addr->ai_next) {
+        clientData->outgoing_fd = socket(addr->ai_family, SOCK_NONBLOCK | SOCK_STREAM, addr->ai_protocol);
+        if (clientData->outgoing_fd < 0) {
+            clientData->outgoing_fd = socket(addr->ai_family, SOCK_STREAM, addr->ai_protocol);
+        }
+        if (clientData->outgoing_fd < 0) {
+            log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
+            return STM_ERROR;
+        }
+        selector_fd_set_nio(clientData->outgoing_fd);
+        errno = 0;
+        log(DEBUG, "Trying to connect() remote socket to %s", printAddressPort(addr, addrBuffer));
+        if (connect(clientData->outgoing_fd, addr->ai_addr, addr->ai_addrlen) == 0 || errno == EINPROGRESS) {
+            log(DEBUG, "Successfully connected to: %s (%s %s) %s %s", printFamily(addr), printType(addr), printProtocol(addr), addr->ai_canonname ? addr->ai_canonname : "-", printAddressPort(addr, addrBuffer));
+            return STM_CONNECT_ATTEMPT;
+        } else {
+            log(ERROR, "Failed to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
+            close(clientData->outgoing_fd);
+            clientData->outgoing_fd = -1;
+        }
+    }
+
+    log(ERROR, "Failed to connect");
+    send(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
+    return STM_ERROR;
+}
 
 StateSocksv5 stm_request_write(struct selector_key *key) {
     ClientData *clientData = key->data; 
+  
 
-    char message[BUFSIZE] = {0};
-    int index = 0;
-    message[index++] = SOCKS_PROTOCOL_VERSION;
-    message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
-    message[index++] = 0x00; // RESERVED debe valer 0x00
-    message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
-
-    char addrBuf[64];
-    int sock = -1;
-    char addrBuffer[128];
-    
-    for (struct addrinfo* addr = clientData->connectAddresses; addr != NULL && sock == -1; addr = addr->ai_next) {
-        sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-        if (sock < 0) {
-            log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
-        } else {
-            errno = 0;
-            log(DEBUG, "Trying to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
-            if (connect(sock, addr->ai_addr, addr->ai_addrlen) != 0) {
-                log(ERROR, "Failed to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
-                close(sock);
-                sock = -1;
-            } else {
-                log(DEBUG, "Successfully connected to: %s (%s %s) %s %s", printFamily(addr), printType(addr), printProtocol(addr), addr->ai_canonname ? addr->ai_canonname : "-", printAddressPort(addr, addrBuf));
-            }
-        }
-    }
-    
-    struct sockaddr_storage boundAddress;
-    socklen_t boundAddressLen = sizeof(boundAddress);
-    if (getsockname(sock, (struct sockaddr*)&boundAddress, &boundAddressLen) >= 0) {
-        printSocketAddress((struct sockaddr*)&boundAddress, addrBuffer);
-        log(INFO, "Remote socket bound at %s", addrBuffer);
-    } else {
-        perror("[WRN] Failed to getsockname() for remote socket");
-    }
-
-    // Send a server reply: SUCCESS, then send the address to which our socket is bound.
-    if (send(key->fd, "\x05\x00\x00", 3, 0) < 0)
-        return -1;
-
-    switch (boundAddress.ss_family) {
-        case AF_INET:
-            // Send: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
-            if (send(key->fd, "\x01", 1, 0) < 0)
-                return -1;
-            if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) < 0)
-                return -1;
-            if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) < 0)
-                return -1;
-            break;
-
-        case AF_INET6:
-            // Send: '\x04' (ATYP identifier for IPv6) followed by the IP and PORT.
-            if (send(key->fd, "\x04", 1, 0) < 0)
-                return -1;
-            if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) < 0)
-                return -1;
-            if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) < 0)
-                return -1;
-            break;
-
-        default:
-            // We don't know the address type? Send IPv4 0.0.0.0:0.
-            if (send(key->fd, "\x01\x00\x00\x00\x00\x00\x00", 7, 0) < 0)
-                return -1;
-            break;
-    }
-    clientData->outgoing_fd = sock;
-    freeaddrinfo(clientData->connectAddresses);
-
-    selector_set_interest_key(key, OP_READ);
-    return STM_CONNECTION_TRAFFIC;
 }
 
 StateSocksv5 stm_dns_done(struct selector_key *key) {
@@ -376,15 +352,78 @@ StateSocksv5 stm_dns_done(struct selector_key *key) {
 
     // selector_set_interest_key(key, OP_READ);
     selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
+    if(clientData->connectAddresses == NULL) {
+        send(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
+        return STM_ERROR;
+    }
+    return beginConnection(key);
+}
 
-    return STM_REQUEST_WRITE;
+void stm_connect_attempt_arrival(unsigned state, struct selector_key *key) {
+
+}
+
+StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
+    ClientData *clientData = key->data; 
+    char message[BUFSIZE] = {0};
+    int index = 0;
+    int sock = clientData->outgoing_fd;
+    message[index++] = SOCKS_PROTOCOL_VERSION;
+    message[index++] = 0x00; // REPLY == 0x00 es que lo acepta
+    message[index++] = 0x00; // RESERVED debe valer 0x00
+    message[index++] = 0x01; // ADDRESS TYPE = 0x01 -> IPV4
+    struct sockaddr_storage boundAddress;
+    socklen_t boundAddressLen = sizeof(boundAddress);
+    if (getsockname(sock, (struct sockaddr*)&boundAddress, &boundAddressLen) >= 0) {
+        printSocketAddress((struct sockaddr*)&boundAddress, addrBuffer);
+        log(INFO, "Remote socket bound at %s", addrBuffer);
+    } else {
+        log(ERROR, "Failed to getsockname() for remote socket");
+        send(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
+        return STM_ERROR;
+    }
+
+    // Send a server reply: SUCCESS, then send the address to which our socket is bound.
+    if (send(key->fd, "\x05\x00\x00", 3, 0) < 0)
+        return STM_ERROR;
+
+    switch (boundAddress.ss_family) {
+        case AF_INET:
+            // Send: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
+            if (send(key->fd, "\x01", 1, 0) < 0)
+                return STM_ERROR;
+            if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) < 0)
+                return STM_ERROR;
+            if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) < 0)
+                return STM_ERROR;
+            break;
+
+        case AF_INET6:
+            // Send: '\x04' (ATYP identifier for IPv6) followed by the IP and PORT.
+            if (send(key->fd, "\x04", 1, 0) < 0)
+                return STM_ERROR;
+            if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) < 0)
+                return STM_ERROR;
+            if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) < 0)
+                return STM_ERROR;
+            break;
+
+        default:
+            // We don't know the address type? Send IPv4 0.0.0.0:0.
+            if (send(key->fd, "\x01\x00\x00\x00\x00\x00\x00", 7, 0) < 0)
+                return STM_ERROR;
+            break;
+    }
+    clientData->outgoing_fd = sock;
+    freeaddrinfo(clientData->connectAddresses);
+
+    selector_set_interest_key(key, OP_READ);
+    return STM_CONNECTION_TRAFFIC;
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data; 
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    log(ERROR, "bytes recibidos: ");
-    print_hex(clientData->buffer, bytes);
+    log(ERROR, ".");
     selector_set_interest_key(key, OP_NOOP);
 }
 
@@ -425,9 +464,9 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = stm_request_write,
     },
     {
-        .state = STM_REQUEST_CONNECT, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
-        .on_arrival = NULL, // TODO
-        .on_write_ready = NULL,
+        .state = STM_CONNECT_ATTEMPT, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
+        .on_arrival = stm_connect_attempt_arrival,
+        .on_write_ready = stm_connect_attempt_write,
     },
     {
         .state = STM_CONNECTION_TRAFFIC, // se termino de establecer la conexion. y ahora se pasan los datos
@@ -440,7 +479,6 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .state = STM_DNS_DONE, 
         .on_block_ready = stm_dns_done,
     },
-    ///
     {
         .state = STM_DONE, 
         .on_arrival = stm_done_arrival, 
