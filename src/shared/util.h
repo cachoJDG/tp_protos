@@ -18,7 +18,9 @@
 #include <pthread.h>
 #include "../buffer.h"
 
-#define BUFSIZE 1024
+#define BUFSIZE (4096)
+#define MAX_ADDR_BUFFER 64
+#define USERNAME_MAX_LENGTH (256)
 
 typedef enum AuthMethod {
     AUTH_NONE = 0x00,
@@ -31,6 +33,7 @@ typedef struct ClientData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
     int           outgoing_fd; 
     struct addrinfo *connectAddresses;
+    char username[USERNAME_MAX_LENGTH];
     char buffer[BUFSIZE];
     char clientBufferData[BUFSIZE];
     char remoteBufferData[BUFSIZE];
@@ -54,7 +57,7 @@ typedef enum StateSocksv5 {
     STM_CONNECTION_TRAFFIC,
     STM_DNS_DONE,
     STM_DONE,
-    STM_ERROR, // DEBE SER EL ULTIMO
+    STM_ERROR, // ERROR DEBE SER EL ULTIMO
 } StateSocksv5;
 
 
