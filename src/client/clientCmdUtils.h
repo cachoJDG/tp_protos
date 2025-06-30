@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../shared/logger.h"
+#include <sys/types.h>
+#include <sys/socket.h>
 
 int sendListUsersCommand(int clientSocket);
 int sendAddUserCommand(int clientSocket, char ** commands);
