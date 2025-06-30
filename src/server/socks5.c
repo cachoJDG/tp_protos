@@ -14,33 +14,48 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .state = STM_INITIAL_READ, // https://datatracker.ietf.org/doc/html/rfc1928#section-3
         .on_arrival = stm_initial_read_arrival,
         .on_read_ready = stm_initial_read,
+        .on_write_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_INITIAL_WRITE,
+        .on_read_ready = error_redirect,
         .on_write_ready = stm_initial_write,
+        .on_block_ready = error_redirect,
     }, 
     {
         .state = STM_LOGIN_READ, // https://datatracker.ietf.org/doc/html/rfc1929
         .on_arrival = stm_login_read_arrival,
         .on_read_ready = stm_login_read,
+        .on_write_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_LOGIN_WRITE,
+        .on_read_ready = error_redirect,
         .on_write_ready= stm_login_write,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_REQUEST_READ, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
         .on_arrival = stm_request_read_arrival,
         .on_read_ready = stm_request_read,
+        .on_write_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_REQUEST_WRITE, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
+        .on_read_ready = error_redirect,
         .on_write_ready = stm_request_write,
+        .on_block_ready = error_redirect,
+
     },
     {
         .state = STM_CONNECT_ATTEMPT, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
         .on_arrival = stm_connect_attempt_arrival,
+        .on_read_ready = error_redirect,
         .on_write_ready = stm_connect_attempt_write,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_CONNECTION_TRAFFIC, // se termino de establecer la conexion. y ahora se pasan los datos
@@ -48,9 +63,13 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = stm_connection_traffic_write,
         .on_read_ready = stm_connection_traffic_read,
         .on_departure = stm_connection_traffic_departure,
+        .on_block_ready = error_redirect, // Creo que este estado deberíamos manejarlo
     },
     {
         .state = STM_DNS_DONE, 
+        // TODO: OJO que este estado genera bugs cuando se hace read o write. Los error_redirect ayudan a "prevenir" esto, pero no sé si está bien
+        .on_read_ready = error_redirect, 
+        .on_write_ready = error_redirect,
         .on_block_ready = stm_dns_done,
     },
     {
@@ -87,6 +106,7 @@ static int acceptTCPConnection(int servSock) {
 
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
+    log(DEBUG, "Accepted new client connection on socket %d", clientSocket);
 
     ClientData *clientData = calloc(1, sizeof(ClientData)); 
     
@@ -107,7 +127,7 @@ void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
     ClientData *clientData = key->data;
-
+    log(DEBUG, "stm_initial_read called for socket %d", key->fd);
     size_t bufferLimit = 0;
     uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
     ssize_t bytesRead = recv(key->fd, clientBuffer, bufferLimit, 0);
@@ -139,7 +159,14 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     return STM_INITIAL_WRITE;
 }
 
+StateSocksv5 error_redirect(struct selector_key *key) {
+    log(ERROR, "error_redirect called for socket %d", key->fd);
+    ClientData *clientData = key->data;
+    return STM_ERROR;
+}
+
 StateSocksv5 stm_initial_write(struct selector_key *key) {
+    log(DEBUG, "stm_initial_write called for socket %d", key->fd);
     ClientData *clientData = key->data;
     
     switch (clientData->authMethod)
@@ -163,6 +190,7 @@ void stm_login_read_arrival(unsigned state, struct selector_key *key) {
 }
 
 StateSocksv5 stm_login_read(struct selector_key *key) {
+    log(DEBUG, "stm_login_read called for socket %d", key->fd);
     ClientData *clientData = key->data;
     char password[USERNAME_MAX_LENGTH] = {0};
     size_t bufferLimit = 0;
@@ -188,6 +216,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 }
 
 StateSocksv5 stm_login_write(struct selector_key *key) {
+    log(DEBUG, "stm_login_write called for socket %d", key->fd);
     ClientData *clientData = key->data;
     
     ssize_t bytes = send(key->fd, "\x05\x00", 2, 0);
@@ -198,6 +227,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
+    log(ERROR, "stm_error called for socket %d", key->fd);
     ClientData *clientData = key->data; 
     log(ERROR, ".");
     selector_set_interest_key(key, OP_NOOP);
@@ -212,6 +242,7 @@ void stm_done_arrival(unsigned state, struct selector_key *key) {
 }
 
 void client_handler_read(struct selector_key *key) {
+    log(DEBUG, "client_handler_read called for socket %d", key->fd);
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_read(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
@@ -220,6 +251,7 @@ void client_handler_read(struct selector_key *key) {
 }
 
 void client_handler_write(struct selector_key *key) {
+    log(DEBUG, "client_handler_write called for socket %d", key->fd);
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_write(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
@@ -227,6 +259,7 @@ void client_handler_write(struct selector_key *key) {
     }
 }
 void client_handler_block(struct selector_key *key) {
+    log(DEBUG, "client_handler_block called for socket %d", key->fd);
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_block(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {

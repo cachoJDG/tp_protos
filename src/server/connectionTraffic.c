@@ -30,6 +30,7 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
 
 // BUFFER CLIENTE --> SOCKET REMOTO
 unsigned stm_connection_traffic_write(struct selector_key *key) {
+    log(DEBUG, "stm_connection_traffic_write called for socket %d [CLIENT]", key->fd);
     ClientData *clientData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&clientData->outgoing_buffer, &readable);
@@ -44,13 +45,13 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     } else {
         selector_set_interest(key->s, clientData->client_fd, OP_READ);
     }
-
-    log(DEBUG, "Write handler called for socket %d [CLIENT]", key->fd);
+    log(DEBUG, "Sent %zd bytes to socket %d [CLIENT]", bytesWritten, key->fd);
     return STM_CONNECTION_TRAFFIC;
 }
 
 // SOCKET CLIENTE --> BUFFER CLIENTE
 unsigned stm_connection_traffic_read(struct selector_key *key) {
+    log(DEBUG, "stm_connection_traffic_read called for socket %d [CLIENT]", key->fd);
     ClientData *clientData = key->data;
     size_t available;
     uint8_t *write_ptr = buffer_write_ptr(&clientData->client_buffer, &available);
@@ -87,6 +88,7 @@ void stm_connection_traffic_departure(const unsigned state, struct selector_key 
 
 // SOCKET REMOTO --> BUFFER REMOTO
 void proxy_handler_read(struct selector_key *key) {
+    log(DEBUG, "proxy_handler_read called for socket %d [REMOTE]", key->fd);
     ClientData *proxyData = key->data;
     size_t available;
     uint8_t *write_ptr = buffer_write_ptr(&proxyData->outgoing_buffer, &available);
@@ -111,6 +113,7 @@ void proxy_handler_read(struct selector_key *key) {
 
 // BUFFER REMOTO --> SOCKET CLIENTE
 void proxy_handler_write(struct selector_key *key) {
+    log(DEBUG, "proxy_handler_write called for socket %d [REMOTE]", key->fd);
     ClientData *proxyData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
@@ -134,7 +137,7 @@ void proxy_handler_write(struct selector_key *key) {
 }
 
 void proxy_handler_block(struct selector_key *key) {
-    log(DEBUG, "Block Handler called for socket %d", key->fd);
+    log(DEBUG, "Block Handler called for socket %d [REMOTE]", key->fd);
 }
 
 void proxy_handler_close(struct selector_key *key) {

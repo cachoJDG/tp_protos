@@ -39,5 +39,6 @@ StateSocksv5 stm_login_write(struct selector_key *key);
 
 void stm_error(unsigned state, struct selector_key *key);
 void stm_done_arrival(unsigned state, struct selector_key *key);
+StateSocksv5 error_redirect(struct selector_key *key);
 
 #endif

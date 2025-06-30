@@ -44,8 +44,8 @@ void *dns_thread_func(void *arg) {
         log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
         job->result = NULL;
     }
-    free(job);
     selector_notify_block(job->selector, job->client_fd);
+    free(job);
     return NULL;
 }
 
@@ -54,6 +54,7 @@ void stm_request_read_arrival(unsigned state, struct selector_key *key) {
 }
 
 StateSocksv5 stm_request_read(struct selector_key *key) {
+    log(DEBUG, "stm_request_read called for socket %d", key->fd);
     ClientData *clientData = key->data;
 
     size_t bufferLimit = 0;
@@ -93,6 +94,8 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
             destinationPort = ntohs(*(uint16_t *)hostname);
             inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
+            log(DEBUG, "Connecting to IPv4 address %s:%u", hostname, destinationPort);
+            log(DEBUG, "stm_request_read ended for socket %d", key->fd);
             break;
         }
         case SOCKSV5_ADDR_TYPE_DOMAIN_NAME: {
@@ -102,6 +105,11 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
                 return STM_ERROR;
             }
             uint8_t domainNameSize = buffer_read(&clientData->client_buffer);
+            if (domainNameSize > MAX_ADDR_BUFFER - 1) {
+                log(ERROR, "Domain name size too large: %d", domainNameSize);
+                free(job);
+                return STM_ERROR;
+            }
             buffer_read_bytes(&clientData->client_buffer, job->host, domainNameSize);
 
             buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
@@ -117,10 +125,12 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             if (pthread_create(&tid, NULL, dns_thread_func, job) != 0) {
                 log(ERROR, "pthread_create: %s", strerror(errno));
                 free(job);
+                log(DEBUG, "stm_request_read ended for socket %d", key->fd);
                 return STM_ERROR;
             }
             pthread_detach(tid);
-
+            log(DEBUG, "DNS request for %s:%s initiated", job->host, job->service);
+            log(DEBUG, "stm_request_read ended for socket %d", key->fd);
             return STM_DNS_DONE;
         }
         case SOCKSV5_ADDR_TYPE_IPV6: {
@@ -156,13 +166,14 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         return STM_ERROR;
     }
     log(DEBUG, "cmd=%d addressType=%d destinationPort=%u", cmd, addressType, destinationPort);
-
+    log(DEBUG, "stm_request_read ended for socket %d", key->fd);
     selector_set_interest_key(key, OP_WRITE); 
 
     return beginConnection(key);
 }
 
 StateSocksv5 beginConnection(struct selector_key *key) {
+    log(DEBUG, "beginConnection called for socket %d", key->fd);
     ClientData *clientData = key->data;
     char addrBuffer[MAX_ADDR_BUFFER] = {0};
     
@@ -244,6 +255,7 @@ void stm_connect_attempt_arrival(unsigned state, struct selector_key *key) {
 }
 
 StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
+    log(DEBUG, "stm_connect_attempt_write called for socket %d", key->fd);
     ClientData *clientData = key->data; 
     char addrBuffer[MAX_ADDR_BUFFER];
     int sock = clientData->outgoing_fd;
