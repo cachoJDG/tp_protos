@@ -176,7 +176,7 @@ int main(int argc, char *argv[]) {
 	char *server = argv[1];     // First arg: server name IP address 
 
 	// Third arg server port
-	char * port = argv[2];
+	char *port = argv[2];
 
 	// Create a reliable, stream socket using TCP
 	int clientSocket = tcpClientSocket(server, port);
