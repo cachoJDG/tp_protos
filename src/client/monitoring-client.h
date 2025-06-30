@@ -1,0 +1,15 @@
+#ifndef MONITORING_CLIENT_H_
+#define MONITORING_CLIENT_H_
+
+#define MAX_ADDR_BUFFER 128
+#define BUFSIZE 512
+#define SOCK_VERSION 5
+
+enum {
+	LIST_USERS = 1,
+	ADD_USER = 2,
+	REMOVE_USER = 3,
+	CHANGE_PASSWORD = 4
+};
+
+#endif

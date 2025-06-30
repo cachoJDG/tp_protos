@@ -11,8 +11,9 @@
 #include <signal.h>
 #include "../stm.h"
 #include "../users/users.h"
+#include <stdlib.h>
 
-#define MAXPENDING 5 // Maximum outstanding connection requests
+#define MAXPENDING 5
 #define BUFSIZE 256
 #define MAX_ADDR_BUFFER 128
 #define SELECTOR_CAPACITY 256
@@ -22,217 +23,338 @@ static char addrBuffer[MAX_ADDR_BUFFER];
 typedef struct ClientData {
     char buffer[BUFSIZE];
     ssize_t bytes;
-    struct state_machine stm; // Pointer to the state machine for this client
-    struct user {
-        char username[64]; // Buffer for username
-        char password[64]; // Buffer for password
-    } user;
+    struct state_machine stm;
+    char username[64];
+    char password[64];
+    int connection_should_close;
 } ClientData;
 
-struct sockaddr_storage _localAddr; // TODO: VARIABLE GLOBAL!!!!!
+struct sockaddr_storage _localAddr;
+
 void client_handler_read(struct selector_key *key);
+void client_handler_write(struct selector_key *key);
+void client_handler_block(struct selector_key *key);
 void client_handler_close(struct selector_key *key);
 
-char username[64];  //TODO: ESTA MAL, SACAR.
-char password[64];
-
-int command = 0; //TODO: ESTA MAL, SACAR.
-
 enum {
-	LIST_USERS = 1,
-	ADD_USER = 2,
-	REMOVE_USER = 3,
-	CHANGE_PASSWORD = 4
-}Commands;
-
-void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
-    printf("%s (%zu bytes): ", label, length);
-    for (size_t i = 0; i < length; i++) {
-        printf("%02X", buffer[i]);
-        if (i < length - 1) printf(" ");
-    }
-    printf("\n");
-}
-
-
-int setupTCPServerSocket(const char *service) {
-	// Construct the server address structure
-	struct addrinfo addrCriteria;                   // Criteria for address match
-	memset(&addrCriteria, 0, sizeof(addrCriteria)); // Zero out structure
-	addrCriteria.ai_family = AF_UNSPEC;             // Any address family
-	addrCriteria.ai_flags = AI_PASSIVE;             // Accept on any address/port
-	addrCriteria.ai_socktype = SOCK_STREAM;         // Only stream sockets
-	addrCriteria.ai_protocol = IPPROTO_TCP;         // Only TCP protocol
-
-	struct addrinfo *servAddr; 			// List of server addresses
-	int rtnVal = getaddrinfo(NULL, service, &addrCriteria, &servAddr);
-	if (rtnVal != 0) {
-		log(FATAL, "getaddrinfo() failed %s", gai_strerror(rtnVal));
-		return -1;
-	}
-
-	int servSock = -1;
-	// Intentamos ponernos a escuchar en alguno de los puertos asociados al servicio, sin especificar una IP en particular
-	// Iteramos y hacemos el bind por alguna de ellas, la primera que funcione, ya sea la general para IPv4 (0.0.0.0) o IPv6 (::/0) .
-	// Con esta implementación estaremos escuchando o bien en IPv4 o en IPv6, pero no en ambas
-	for (struct addrinfo *addr = servAddr; addr != NULL && servSock == -1; addr = addr->ai_next) {
-		errno = 0;
-		// Create a TCP socket
-		servSock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-		if (servSock < 0) {
-			log(DEBUG, "Cant't create socket on %s : %s ", printAddressPort(addr, addrBuffer), strerror(errno));  
-			continue;       // Socket creation failed; try next address
-		}
-
-		// Bind to ALL the address and set socket to listen
-		if ((bind(servSock, addr->ai_addr, addr->ai_addrlen) == 0) && (listen(servSock, MAXPENDING) == 0)) {
-			// Print local address of socket
-			struct sockaddr_storage localAddr;
-			socklen_t addrSize = sizeof(localAddr);
-			if (getsockname(servSock, (struct sockaddr *) &localAddr, &addrSize) >= 0) {
-				printSocketAddress((struct sockaddr *) &localAddr, addrBuffer);
-                _localAddr = localAddr;
-				log(INFO, "Binding to %s", addrBuffer);
-			}
-		} else {
-			log(DEBUG, "Cant't bind %s", strerror(errno));  
-			close(servSock);  // Close and try with the next one
-			servSock = -1;
-		}
-	}
-
-	freeaddrinfo(servAddr);
-
-	return servSock;
-}
-
-int acceptTCPConnection(int servSock) {
-	struct sockaddr_storage clntAddr; // Client address
-	// Set length of client address structure (in-out parameter)
-	socklen_t clntAddrLen = sizeof(clntAddr);
-
-	// Wait for a client to connect
-	int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
-	if (clntSock < 0) {
-		log(ERROR, "accept() failed");
-		return -1;
-	}
-
-	// clntSock is connected to a client!
-	printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
-	log(INFO, "Handling client %s", addrBuffer);
-
-	return clntSock;
-}
-
+    LIST_USERS = 1,
+    ADD_USER = 2,
+    REMOVE_USER = 3,
+    CHANGE_PASSWORD = 4
+} Commands;
 
 enum StateSocksv5 {
     STM_LOGIN_READ,
     STM_LOGIN_WRITE,
     STM_REQUEST_READ,
     STM_REQUEST_WRITE,
-    STM_ERROR, // DEBE SER EL ULTIMO
+    STM_DONE,
+    STM_ERROR,
 };
+
+void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
+    if (current_level <= DEBUG) {  // Solo mostrar en modo DEBUG
+        printf("%s (%zu bytes): ", label, length);
+        for (size_t i = 0; i < length; i++) {
+            printf("%02X", buffer[i]);
+            if (i < length - 1) printf(" ");
+        }
+        printf("\n");
+    }
+}
+
+int setupTCPServerSocket(const char *service) {
+    struct addrinfo addrCriteria;
+    memset(&addrCriteria, 0, sizeof(addrCriteria));
+    addrCriteria.ai_family = AF_UNSPEC;
+    addrCriteria.ai_flags = AI_PASSIVE;
+    addrCriteria.ai_socktype = SOCK_STREAM;
+    addrCriteria.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo *servAddr;
+    int rtnVal = getaddrinfo(NULL, service, &addrCriteria, &servAddr);
+    if (rtnVal != 0) {
+        log(FATAL, "getaddrinfo() failed %s", gai_strerror(rtnVal));
+        return -1;
+    }
+
+    int servSock = -1;
+    for (struct addrinfo *addr = servAddr; addr != NULL && servSock == -1; addr = addr->ai_next) {
+        errno = 0;
+        servSock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+        if (servSock < 0) {
+            log(DEBUG, "Can't create socket on %s : %s ", printAddressPort(addr, addrBuffer), strerror(errno));
+            continue;
+        }
+
+        // Agregar SO_REUSEADDR para evitar "Address already in use"
+        int opt = 1;
+        if (setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+            log(DEBUG, "setsockopt SO_REUSEADDR failed: %s", strerror(errno));
+        }
+
+        if ((bind(servSock, addr->ai_addr, addr->ai_addrlen) == 0) && (listen(servSock, MAXPENDING) == 0)) {
+            struct sockaddr_storage localAddr;
+            socklen_t addrSize = sizeof(localAddr);
+            if (getsockname(servSock, (struct sockaddr *) &localAddr, &addrSize) >= 0) {
+                printSocketAddress((struct sockaddr *) &localAddr, addrBuffer);
+                _localAddr = localAddr;
+                log(INFO, "Binding to %s", addrBuffer);
+            }
+        } else {
+            log(DEBUG, "Can't bind %s", strerror(errno));
+            close(servSock);
+            servSock = -1;
+        }
+    }
+
+    freeaddrinfo(servAddr);
+    return servSock;
+}
+
+int acceptTCPConnection(int servSock) {
+    struct sockaddr_storage clntAddr;
+    socklen_t clntAddrLen = sizeof(clntAddr);
+
+    int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
+    if (clntSock < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            log(ERROR, "accept() failed: %s", strerror(errno));
+        }
+        return -1;
+    }
+
+    printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
+    log(INFO, "Handling client %s", addrBuffer);
+
+    return clntSock;
+}
 
 void stm_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
     memset(clientData->buffer, 0, BUFSIZE);
+    log(DEBUG, "Entering state %d for client fd=%d", state, key->fd);
+}
+
+void stm_error_arrival(unsigned state, struct selector_key *key) {
+    log(ERROR, "Error in state %d for client fd=%d", state, key->fd);
+    ClientData *clientData = key->data;
+    clientData->connection_should_close = 1;
+}
+
+void stm_done_arrival(unsigned state, struct selector_key *key) {
+    log(INFO, "State %d completed for client fd=%d", state, key->fd);
+    ClientData *clientData = key->data;
+    clientData->connection_should_close = 1;
 }
 
 enum StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    print_hex_compact("Datos recibidos", (unsigned char*)clientData->buffer, bytes);
-    char * message = clientData->buffer;
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE - 1, 0);
+    
+    if (bytes <= 0) {
+        return STM_ERROR;
+    }
+
+    char *message = clientData->buffer;
+    if (bytes < 3) {  // version + username length + password length
+        log(ERROR, "Invalid login message length %zd from client fd=%d", bytes, key->fd);
+        return STM_ERROR;
+    }
 
     int index = 1;
-    int usernameLength = message[index++];
-    memcpy(username, message + index, usernameLength);
-    username[usernameLength] = '\0'; // Null-terminate the username
-    index += usernameLength;
-    int passwordLength = message[index++];
-    memcpy(password, message + index, passwordLength);
-    password[passwordLength] = '\0'; // Null-terminate the password
+    int usernameLength = (unsigned char)message[index++];
+    
+    if (usernameLength <= 0 || usernameLength >= 64 || index + usernameLength >= bytes) {
+        log(ERROR, "Invalid username length %d from client fd=%d", usernameLength, key->fd);
+        return STM_ERROR;
+    }
 
-    selector_set_interest_key(key, OP_WRITE); 
+    memcpy(clientData->username, message + index, usernameLength);
+    clientData->username[usernameLength] = '\0';
+    index += usernameLength;
+    
+    if (index >= bytes) {
+        log(ERROR, "Invalid message format from client fd=%d", key->fd);
+        return STM_ERROR;
+    }
+    
+    int passwordLength = (unsigned char)message[index++];
+    
+    if (passwordLength <= 0 || passwordLength >= 64 || index + passwordLength > bytes) {
+        log(ERROR, "Invalid password length %d from client fd=%d", passwordLength, key->fd);
+        return STM_ERROR;
+    }
+
+    memcpy(clientData->password, message + index, passwordLength);
+    clientData->password[passwordLength] = '\0';
+
+    log(INFO, "Login attempt from client fd=%d, username: %s", key->fd, clientData->username);
+
+    selector_set_interest_key(key, OP_WRITE);
     return STM_LOGIN_WRITE;
 }
 
 enum StateSocksv5 stm_login_write(struct state_machine *stm, struct selector_key *key) {
     ClientData *clientData = key->data;
 
-    if(validate_login(username, password)){
-        char welcomeMessage[64];
-        printf("ACEPTADO\n");
+    if (validate_login(clientData->username, clientData->password)) {
+        log(DEBUG, "Login successful for user: %s", clientData->username);
         char message[2] = {1, 1};
-        send(key->fd, &message, 1, 0);
+        ssize_t sent = send(key->fd, message, 2, 0);  // Enviar 2 bytes, no 1
         
+        if (sent < 0) {
+            log(ERROR, "Failed to send login success response to client fd=%d: %s", key->fd, strerror(errno));
+            return STM_ERROR;
+        }
+
         selector_set_interest_key(key, OP_READ);
         return STM_REQUEST_READ;
     } else {
-        char welcomeMessage[64];
-        printf("RECHAZADO\n");
+        log(DEBUG, "Login failed for user: %s", clientData->username);
         char message[2] = {1, 0};
-        send(key->fd, &message, 2, 0);
+        ssize_t sent = send(key->fd, message, 2, 0);
         
-        selector_set_interest_key(key, OP_NOOP);
+        if (sent < 0) {
+            log(ERROR, "Failed to send login failure response to client fd=%d: %s", key->fd, strerror(errno));
+        }
+
         return STM_ERROR;
     }
 }
 
 enum StateSocksv5 stm_request_read(struct selector_key *key) {
     ClientData *clientData = key->data;
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
-    printf("recibi!!\n");
-    print_hex_compact("Datos recibidos", (unsigned char*)clientData->buffer, bytes);
-    char command = clientData->buffer[0];
+    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE - 1, 0);
+    
+    if (bytes <= 0) {
+        if (bytes == 0) {
+            log(INFO, "Client fd=%d closed connection during request", key->fd);
+        } else {
+            log(ERROR, "recv() failed in request_read for fd=%d: %s", key->fd, strerror(errno));
+        }
+        return STM_ERROR;
+    }
 
+    log(DEBUG, "Received %zd bytes for request from client fd=%d", bytes, key->fd);
+    print_hex_compact("Request data received", (unsigned char*)clientData->buffer, bytes);
+
+    clientData->bytes = bytes;  // Guardar el número de bytes recibidos
     selector_set_interest_key(key, OP_WRITE);
     return STM_REQUEST_WRITE;
 }
 
-char *getStringFromSize(char *buffer) {  //El primer caracter del buffer es el tamaño del string, luego el string
-    char size = buffer[0];
+char *getStringFromSize(char *buffer) {
+    if (!buffer) return NULL;
+    
+    unsigned char size = (unsigned char)buffer[0];
+    if (size == 0) return NULL;
+    
     char *str = malloc(size + 1);
     if (str == NULL) {
-        perror("malloc");
+        log(ERROR, "malloc failed in getStringFromSize");
         return NULL;
     }
+    
     memcpy(str, buffer + 1, size);
-    str[size] = '\0'; // Null-terminate the string
-    printf("String recibido: %s\n", str);
-    printf("Tamaño del string: %d\n", size);
+    str[size] = '\0';
+    
+    log(DEBUG, "Parsed string: %s (length: %d)", str, size);
     return str;
 }
 
 enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_key *key) {
     ClientData *clientData = key->data;
+    
+    if (clientData->bytes <= 0) {
+        log(ERROR, "No data to process in request_write for fd=%d", key->fd);
+        return STM_ERROR;
+    }
+    
     char command = clientData->buffer[0];
     char *buffer = clientData->buffer;
+    
+    log(DEBUG, "Processing command %d for client fd=%d", command, key->fd);
     
     char response[1024];
     switch(command) {
         case LIST_USERS:
+            log(DEBUG, "Comando LIST_USERS recibido");
             snprintf(response, sizeof(response), "%s", getUsers());
             break;
-        case ADD_USER:
-            char * usernameToAdd = getStringFromSize(buffer + 1);
-            char * password = getStringFromSize(buffer + 1 + buffer[1] + 1);
-            printf("Agregando usuario: %s con contraseña: %s\n", usernameToAdd, password);
+            
+        case ADD_USER: {
+            log(DEBUG, "Comando ADD_USER recibido");
+            
+            if (clientData->bytes < 4) {  // Mínimo: command + username_len + username + password_len
+                log(ERROR, "Invalid ADD_USER message length");
+                snprintf(response, sizeof(response), "Error: Invalid message format\n");
+                break;
+            }
+            
+            char *usernameToAdd = getStringFromSize(buffer + 1);
+            if (!usernameToAdd) {
+                log(ERROR, "Failed to parse username in ADD_USER");
+                snprintf(response, sizeof(response), "Error: Invalid username format\n");
+                break;
+            }
+            
+            int username_len = (unsigned char)buffer[1];
+            char *password = getStringFromSize(buffer + 1 + 1 + username_len);
+            if (!password) {
+                log(ERROR, "Failed to parse password in ADD_USER");
+                free(usernameToAdd);
+                snprintf(response, sizeof(response), "Error: Invalid password format\n");
+                break;
+            }
+            
+            log(INFO, "Adding user: %s", usernameToAdd);
             add_user(usernameToAdd, password);
             snprintf(response, sizeof(response), "Usuario %s agregado exitosamente\n%s", usernameToAdd, getUsers());
+            
             free(usernameToAdd);
             free(password);
             break;
+        }
+
+        case REMOVE_USER: {
+            log(DEBUG, "Comando REMOVE_USER recibido");
+            
+            if (clientData->bytes < 3) {  // Mínimo: command + username_len + username
+                log(ERROR, "Invalid REMOVE_USER message length");
+                snprintf(response, sizeof(response), "Error: Invalid message format\n");
+                break;
+            }
+            
+            char *usernameToRemove = getStringFromSize(buffer + 1);
+            if (!usernameToRemove) {
+                log(ERROR, "Failed to parse username in REMOVE_USER");
+                snprintf(response, sizeof(response), "Error: Invalid username format\n");
+                break;
+            }
+            
+            log(INFO, "Removing user: %s", usernameToRemove);
+            remove_user(usernameToRemove);
+            snprintf(response, sizeof(response), "Usuario %s eliminado exitosamente\n%s", usernameToRemove, getUsers());
+            
+            free(usernameToRemove);
+            break;
+        }
+        
         default:
+            log(DEBUG, "Comando desconocido recibido: %d", command);
             snprintf(response, sizeof(response), "Comando %d procesado\n", command);
             break;
     }
     
-    send(key->fd, response, strlen(response), 0);
+    ssize_t sent = send(key->fd, response, strlen(response), 0);
+    if (sent < 0) {
+        log(ERROR, "Failed to send response to client fd=%d: %s", key->fd, strerror(errno));
+        return STM_ERROR;
+    }
     
-    selector_set_interest_key(key, OP_READ);
-    return STM_REQUEST_READ;
+    log(DEBUG, "Sent %zd bytes response to client fd=%d", sent, key->fd);
+    return STM_DONE;
 }
 
 static const struct state_definition CLIENT_STATE_TABLE[] = {
@@ -244,7 +366,7 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
     {
         .state = STM_LOGIN_WRITE,
         .on_write_ready = stm_login_write,
-    }, 
+    },
     {
         .state = STM_REQUEST_READ,
         .on_arrival = stm_read_arrival,
@@ -253,101 +375,184 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
     {
         .state = STM_REQUEST_WRITE,
         .on_write_ready = stm_request_write,
-    }, 
-    ///
-        {
-        .state = STM_ERROR, 
-        .on_arrival = NULL, 
+    },
+    {
+        .state = STM_DONE,
+        .on_arrival = stm_done_arrival,
+    },
+    {
+        .state = STM_ERROR,
+        .on_arrival = stm_error_arrival,
     },
 };
-
 
 void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     enum StateSocksv5 state = stm_handler_read(&clientData->stm, key);
-    if(state == STM_ERROR) {
-        client_handler_close(key);
+    
+    if (state == STM_ERROR || clientData->connection_should_close) {
+        log(DEBUG, "Closing connection for client fd=%d (state=%d, should_close=%d)", 
+            key->fd, state, clientData->connection_should_close);
+        selector_unregister_fd(key->s, key->fd);
+        return;
     }
-    return;
 }
 
 void client_handler_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     enum StateSocksv5 state = stm_handler_write(&clientData->stm, key);
-    if(state == STM_ERROR) {
-        client_handler_close(key);
+    
+    if (state == STM_ERROR || clientData->connection_should_close) {
+        log(DEBUG, "Closing connection for client fd=%d (state=%d, should_close=%d)", 
+            key->fd, state, clientData->connection_should_close);
+        selector_unregister_fd(key->s, key->fd);
+        return;
     }
 }
+
 void client_handler_block(struct selector_key *key) {
     ClientData *clientData = key->data;
     enum StateSocksv5 state = stm_handler_block(&clientData->stm, key);
-    if(state == STM_ERROR) {
-        client_handler_close(key);
+    
+    if (state == STM_ERROR || clientData->connection_should_close) {
+        log(DEBUG, "Closing connection for client fd=%d (state=%d, should_close=%d)", 
+            key->fd, state, clientData->connection_should_close);
+        selector_unregister_fd(key->s, key->fd);
+        return;
     }
 }
+
 void client_handler_close(struct selector_key *key) {
     ClientData *clientData = key->data;
-    selector_set_interest_key(key, OP_NOOP); // quiza sacar esto
-    puts("handling client close");
-    free(key->data);
+    log(INFO, "Closing connection for client fd=%d", key->fd);
+    
+    close(key->fd);
+    
+    // Liberar memoria
+    if (clientData) {
+        free(clientData);
+    }
 }
 
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
-    fd_handler *clientHandler = malloc(sizeof(fd_handler)); // TODO free
+    if (clientSocket < 0) {
+        return;  // Error ya loggeado en acceptTCPConnection
+    }
+
+    // Configurar socket como no-bloqueante
+    if (selector_fd_set_nio(clientSocket) < 0) {
+        log(ERROR, "Could not set O_NONBLOCK on client socket fd=%d", clientSocket);
+        close(clientSocket);
+        return;
+    }
+
+    fd_handler *clientHandler = malloc(sizeof(fd_handler));
+    if (!clientHandler) {
+        log(ERROR, "Failed to allocate memory for client handler");
+        close(clientSocket);
+        return;
+    }
+
     clientHandler->handle_read = client_handler_read;
     clientHandler->handle_write = client_handler_write;
     clientHandler->handle_close = client_handler_close;
     clientHandler->handle_block = client_handler_block;
-    ClientData *clientData = calloc(1, sizeof(ClientData)); 
-    
+
+    ClientData *clientData = calloc(1, sizeof(ClientData));
+    if (!clientData) {
+        log(ERROR, "Failed to allocate memory for client data");
+        free(clientHandler);
+        close(clientSocket);
+        return;
+    }
+
     clientData->stm.initial = STM_LOGIN_READ;
     clientData->stm.max_state = STM_ERROR;
     clientData->stm.states = CLIENT_STATE_TABLE;
+    clientData->connection_should_close = 0;
 
     stm_init(&clientData->stm);
 
-    selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData);
+    if (selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)clientData) != SELECTOR_SUCCESS) {
+        log(ERROR, "Failed to register client socket fd=%d in selector", clientSocket);
+        free(clientHandler);
+        free(clientData);
+        close(clientSocket);
+        return;
+    }
+
+    log(DEBUG, "Client fd=%d registered successfully in selector", clientSocket);
 }
 
 int main(int argc, char *argv[]) {
-
-    load_users(); // Carga los usuarios desde el archivo
-    print_users();
-
-    // 1) Preparo el socket de escucha
-    int servSock = setupTCPServerSocket(argv[1]);
-    if (servSock < 0) return 1;
-
-    // 2) Pongo el socket en modo no-bloqueante
-    if (selector_fd_set_nio(servSock) < 0) {
-        log(FATAL, "Could not set O_NONBLOCK on listening socket");
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+        return 1;
     }
 
-    // 3) Inicializo el selector
+    setLogLevel(DEBUG); //INFO for production, DEBUG for development
+
+    log(INFO, "Starting SOCKS5 server on port %s", argv[1]);
+
+    load_users();
+    log(INFO, "Users loaded successfully");
+
+    int servSock = setupTCPServerSocket(argv[1]);
+    if (servSock < 0) {
+        log(FATAL, "Failed to setup TCP server socket");
+        return 1;
+    }
+
+    if (selector_fd_set_nio(servSock) < 0) {
+        log(FATAL, "Could not set O_NONBLOCK on listening socket");
+        close(servSock);
+        return 1;
+    }
+
     const struct selector_init conf = {
-        .signal = SIGALRM,          // o la señal que prefieras para notifs
+        .signal = SIGALRM,
         .select_timeout = { .tv_sec = 1, .tv_nsec = 0 }
     };
-    selector_init(&conf);
-    fd_selector selector = selector_new(SELECTOR_CAPACITY);
+    
+    if (selector_init(&conf) != SELECTOR_SUCCESS) {
+        log(FATAL, "Failed to initialize selector");
+        close(servSock);
+        return 1;
+    }
 
-    // 4) Registro el socket de escucha en el selector
-    //    Cuando haya OP_READ, invocará handle_listen()
+    fd_selector selector = selector_new(SELECTOR_CAPACITY);
+    if (selector == NULL) {
+        log(FATAL, "Failed to create selector");
+        close(servSock);
+        selector_close();
+        return 1;
+    }
+
     static const fd_handler listen_handler = {
-        .handle_read  = handle_read_passive,   // en handle_read haces el accept()
+        .handle_read  = handle_read_passive,
         .handle_write = NULL,
         .handle_block = NULL,
         .handle_close = NULL
     };
-    selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
 
-    // 5) Bucle principal: dejo que el selector gestione todos los eventos
-    while (selector_select(selector) == SELECTOR_SUCCESS) {
-        ; // selector_select internamente invoca tus callbacks
+    if (selector_register(selector, servSock, &listen_handler, OP_READ, NULL) != SELECTOR_SUCCESS) {
+        log(FATAL, "Failed to register listening socket in selector");
+        selector_destroy(selector);
+        selector_close();
+        close(servSock);
+        return 1;
     }
 
+    log(INFO, "Server started successfully, entering main loop");
+
+    while (selector_select(selector) == SELECTOR_SUCCESS) {
+        // El selector maneja todos los eventos
+    }
+
+    log(INFO, "Server shutting down");
     selector_destroy(selector);
-	selector_close();
+    selector_close();
+    close(servSock);
     return 0;
 }

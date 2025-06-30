@@ -99,6 +99,18 @@ char *getUsers(){
     return buffer;
 }
 
+int remove_user(const char *username) {
+    int idx = find_user(username);
+    if (idx < 0) {
+        fprintf(stderr, "El usuario no existe.\n");
+        return -1;
+    }
+    for (int i = idx; i < user_count - 1; i++) {
+        users[i] = users[i + 1];
+    }
+    user_count--;
+    return 0;
+}
 /*
 int main() {
     load_users();

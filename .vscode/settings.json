@@ -7,6 +7,9 @@
         "string.h": "c",
         "compare": "c",
         "limits": "c",
-        "new": "c"
+        "new": "c",
+        "util.h": "c",
+        "clientcmdparser.h": "c",
+        "inet.h": "c"
     }
 }

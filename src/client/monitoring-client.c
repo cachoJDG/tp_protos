@@ -11,17 +11,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
-
-#define MAX_ADDR_BUFFER 128
-#define BUFSIZE 512
-#define SOCK_VERSION 5
-
-enum {
-	LIST_USERS = 1,
-	ADD_USER = 2,
-	REMOVE_USER = 3,
-	CHANGE_PASSWORD = 4
-}Commands;
+#include "clientCmdParser.h"
+#include "clientCmdUtils.h"
+#include "monitoring-client.h"
 
 int tcpClientSocket(const char *host, const char *service) {
 	char addrBuffer[MAX_ADDR_BUFFER] = {0};
@@ -60,29 +52,24 @@ int tcpClientSocket(const char *host, const char *service) {
 	return sock;
 }
 
-void sendCommand(int clientSocket, char ** commands){
+void sendCommand(int clientSocket, char ** commands, int commandCount) {
 
-	if(strcmp(commands[0], "LIST") == 0 && strcmp(commands[1], "USERS") == 0) {
-		unsigned char msg = LIST_USERS;
-		send(clientSocket, &msg, 1, 0); // SOCKS5 LIST USERS command
+	printf("Debug: commandCount = %d\n", commandCount);
+    for (int i = 0; i < commandCount; i++) {
+        printf("Debug: commands[%d] = %s\n", i, commands[i] ? commands[i] : "NULL");
+    }
+
+	if(parseListUsersCommand(commands, commandCount)) {
+		sendListUsersCommand(clientSocket);
 	}
-	else if(strcmp(commands[0], "ADD") == 0 && strcmp(commands[1], "USER") == 0) {
-		char ans[BUFSIZE] = {0};
-		if (commands[2] == NULL || commands[3] == NULL) {
-			fprintf(stderr, "Usage: ADD USER <username> <password>\n");
-			return;
-		}
-		ans[0] = ADD_USER;
-		int index = 1;
-		int usernameLength = strlen(commands[2]);
-		ans[index++] = usernameLength;
-		memcpy(ans + index, commands[2], usernameLength);
-		index += usernameLength;
-		int passwordLength = strlen(commands[3]);
-		ans[index++] = passwordLength;
-		memcpy(ans + index, commands[3], passwordLength);
-		index += passwordLength;
-		send(clientSocket, ans, index, 0);
+	else if(parseAddUserCommand(commands, commandCount)) {
+		sendAddUserCommand(clientSocket ,commands);
+	}
+	else if(parseRemoveUserCommand(commands, commandCount)) {
+		sendRemoveUserCommand(clientSocket ,commands);
+	}
+	else if(parseChangePasswordCommand(commands, commandCount)) {
+		sendChangePasswordCommand(clientSocket ,commands);
 	}
 	else {
 		fprintf(stderr, "Unknown command\n");
@@ -178,10 +165,14 @@ void readServerResponse(int clientSocket) {
 
 int main(int argc, char *argv[]) {
 
-	/*if (argc != 4) {
-		log(FATAL, "usage: %s <Server Name/Address> <Echo Word> <Server Port/Name>", argv[0]);
-	}*/
-
+	if (argc < 4) {
+        fprintf(stderr, "Usage: %s <server> <port> <command> [args...]\n", argv[0]);
+        fprintf(stderr, "Examples:\n");
+        fprintf(stderr, "  %s localhost 2020 LIST USERS\n", argv[0]);
+        fprintf(stderr, "  %s localhost 2020 ADD USER username password\n", argv[0]);
+        return 1;
+    }
+	
 	char *server = argv[1];     // First arg: server name IP address 
 
 	// Third arg server port
@@ -194,14 +185,27 @@ int main(int argc, char *argv[]) {
 	}
     bool authSuccess = authClient(clientSocket);
 
-	char *commands[argc - 3];
-	for(int i = 3; i < argc; i++) {
-		commands[i - 3] = argv[i];
-	}
-	sendCommand(clientSocket ,commands);
+	int commandCount = argc - 3;
+    char **commands = malloc(commandCount * sizeof(char*));
+    if (commands == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        close(clientSocket);
+        return 1;
+    }
+
+	for (int i = 0; i < commandCount; i++) {
+        commands[i] = NULL;
+    }
+
+    for (int i = 3; i < argc; i++) {
+        commands[i - 3] = argv[i];
+    }
+
+	sendCommand(clientSocket ,commands, argc - 3);
 
 	readServerResponse(clientSocket);
 
 	close(clientSocket);
+	free(commands);
 	return 0;
 }
