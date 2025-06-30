@@ -111,12 +111,3 @@ int remove_user(const char *username) {
     user_count--;
     return 0;
 }
-/*
-int main() {
-    load_users();
-    print_users();
-    printf("Validación de usuario: %s\n", validate_login("guido_carrillo", "1234") ? "Éxito" : "Fallo");
-    add_user("pepe_mujica", "1234");
-    print_users();
-
-}*/

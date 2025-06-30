@@ -18,6 +18,28 @@
 static char addrBuffer[MAX_ADDR_BUFFER_MONITORING];
 struct sockaddr_storage _localAddr;
 
+int acceptTCPConnection(int servSock) {
+	struct sockaddr_storage clntAddr;
+	socklen_t clntAddrLen = sizeof(clntAddr);
+    static char addrBuffer[MAX_ADDR_BUFFER];
+
+	// Wait for a client to connect
+	int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
+	if (clntSock < 0) {
+		log(ERROR, "accept() failed");
+		return -1;
+	}
+    if(selector_fd_set_nio(clntSock < 0)) {
+        log(ERROR, "accept() failed");
+        return -1;
+    }
+
+	printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
+	log(INFO, "Handling client %s", addrBuffer);
+
+	return clntSock;
+}
+
 void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
     if (current_level <= DEBUG) {
         printf("%s (%zu bytes): ", label, length);
@@ -29,91 +51,25 @@ void print_hex_compact(const char* label, const unsigned char* buffer, size_t le
     }
 }
 
-int setupTCPServerSocket(const char *service) {
-    struct addrinfo addrCriteria;
-    memset(&addrCriteria, 0, sizeof(addrCriteria));
-    addrCriteria.ai_family = AF_UNSPEC;
-    addrCriteria.ai_flags = AI_PASSIVE;
-    addrCriteria.ai_socktype = SOCK_STREAM;
-    addrCriteria.ai_protocol = IPPROTO_TCP;
-
-    struct addrinfo *servAddr;
-    int rtnVal = getaddrinfo(NULL, service, &addrCriteria, &servAddr);
-    if (rtnVal != 0) {
-        log(FATAL, "getaddrinfo() failed %s", gai_strerror(rtnVal));
-        return -1;
-    }
-
-    int servSock = -1;
-    for (struct addrinfo *addr = servAddr; addr != NULL && servSock == -1; addr = addr->ai_next) {
-        errno = 0;
-        servSock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-        if (servSock < 0) {
-            log(DEBUG, "Can't create socket on %s : %s ", printAddressPort(addr, addrBuffer), strerror(errno));
-            continue;
-        }
-
-        int opt = 1;
-        if (setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-            log(DEBUG, "setsockopt SO_REUSEADDR failed: %s", strerror(errno));
-        }
-
-        if ((bind(servSock, addr->ai_addr, addr->ai_addrlen) == 0) && (listen(servSock, MAXPENDING) == 0)) {
-            struct sockaddr_storage localAddr;
-            socklen_t addrSize = sizeof(localAddr);
-            if (getsockname(servSock, (struct sockaddr *) &localAddr, &addrSize) >= 0) {
-                printSocketAddress((struct sockaddr *) &localAddr, addrBuffer);
-                _localAddr = localAddr;
-                log(INFO, "Binding to %s", addrBuffer);
-            }
-        } else {
-            log(DEBUG, "Can't bind %s", strerror(errno));
-            close(servSock);
-            servSock = -1;
-        }
-    }
-
-    freeaddrinfo(servAddr);
-    return servSock;
-}
-
-int acceptTCPConnection(int servSock) {
-    struct sockaddr_storage clntAddr;
-    socklen_t clntAddrLen = sizeof(clntAddr);
-
-    int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
-    if (clntSock < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            log(ERROR, "accept() failed: %s", strerror(errno));
-        }
-        return -1;
-    }
-
-    printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
-    log(INFO, "Handling client %s", addrBuffer);
-
-    return clntSock;
-}
-
-void stm_read_arrival(unsigned state, struct selector_key *key) {
+void stm_read_monitoring_arrival(unsigned state, struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     memset(MonitoringClientData->buffer, 0, BUFSIZE_MONITORING);
     log(DEBUG, "Entering state %d for client fd=%d", state, key->fd);
 }
 
-void stm_error_arrival(unsigned state, struct selector_key *key) {
+void stm_error_monitoring_arrival(unsigned state, struct selector_key *key) {
     log(ERROR, "Error in state %d for client fd=%d", state, key->fd);
     MonitoringClientData *MonitoringClientData = key->data;
     MonitoringClientData->connection_should_close = 1;
 }
 
-void stm_done_arrival(unsigned state, struct selector_key *key) {
+void stm_done_monitoring_arrival(unsigned state, struct selector_key *key) {
     log(INFO, "State %d completed for client fd=%d", state, key->fd);
     MonitoringClientData *MonitoringClientData = key->data;
     MonitoringClientData->connection_should_close = 1;
 }
 
-enum StateMonitoring stm_login_read(struct selector_key *key) {
+enum StateMonitoring stm_login_monitoring_read(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE_MONITORING - 1, 0);
     
@@ -160,7 +116,7 @@ enum StateMonitoring stm_login_read(struct selector_key *key) {
     return STM_LOGIN_MONITORING_WRITE;
 }
 
-enum StateMonitoring stm_login_write(struct selector_key *key) {
+enum StateMonitoring stm_login_monitoring_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
 
     if (validate_login(MonitoringClientData->username, MonitoringClientData->password)) {
@@ -188,7 +144,7 @@ enum StateMonitoring stm_login_write(struct selector_key *key) {
     }
 }
 
-enum StateMonitoring stm_request_read(struct selector_key *key) {
+enum StateMonitoring stm_request_monitoring_read(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE_MONITORING - 1, 0);
     
@@ -228,7 +184,7 @@ char *getStringFromSize(char *buffer) {
     return str;
 }
 
-enum StateMonitoring stm_request_write(struct selector_key *key) {
+enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     
     if (MonitoringClientData->bytes <= 0) {
@@ -324,33 +280,33 @@ enum StateMonitoring stm_request_write(struct selector_key *key) {
 static const struct state_definition CLIENT_STATE_MONITORING_TABLE[] = {
     {
         .state = STM_LOGIN_MONITORING_READ,
-        .on_arrival = stm_read_arrival,
-        .on_read_ready = stm_login_read,
+        .on_arrival = stm_read_monitoring_arrival,
+        .on_read_ready = stm_login_monitoring_read,
     },
     {
         .state = STM_LOGIN_MONITORING_WRITE,
-        .on_write_ready = stm_login_write,
+        .on_write_ready = stm_login_monitoring_write,
     },
     {
         .state = STM_REQUEST_MONITORING_READ,
-        .on_arrival = stm_read_arrival,
-        .on_read_ready = stm_request_read,
+        .on_arrival = stm_read_monitoring_arrival,
+        .on_read_ready = stm_request_monitoring_read,
     },
     {
         .state = STM_REQUEST_MONITORING_WRITE,
-        .on_write_ready = stm_request_write,
+        .on_write_ready = stm_request_monitoring_write,
     },
     {
         .state = STM_MONITORING_DONE,
-        .on_arrival = stm_done_arrival,
+        .on_arrival = stm_done_monitoring_arrival,
     },
     {
         .state = STM_MONITORING_ERROR,
-        .on_arrival = stm_error_arrival,
+        .on_arrival = stm_error_monitoring_arrival,
     },
 };
 
-void client_handler_read(struct selector_key *key) {
+void client_handler_monitoring_read(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     enum StateMonitoring state = stm_handler_read(&MonitoringClientData->stm, key);
     
@@ -362,7 +318,7 @@ void client_handler_read(struct selector_key *key) {
     }
 }
 
-void client_handler_write(struct selector_key *key) {
+void client_handler_monitoring_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     enum StateMonitoring state = stm_handler_write(&MonitoringClientData->stm, key);
     
@@ -374,7 +330,7 @@ void client_handler_write(struct selector_key *key) {
     }
 }
 
-void client_handler_block(struct selector_key *key) {
+void client_handler_monitoring_block(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     enum StateMonitoring state = stm_handler_block(&MonitoringClientData->stm, key);
     
@@ -386,7 +342,7 @@ void client_handler_block(struct selector_key *key) {
     }
 }
 
-void client_handler_close(struct selector_key *key) {
+void client_handler_monitoring_close(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     log(INFO, "Closing connection for client fd=%d", key->fd);
     
@@ -397,7 +353,7 @@ void client_handler_close(struct selector_key *key) {
     }
 }
 
-void handle_read_passive(struct selector_key *key) {
+void handle_read_passive_monitoring(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
     if (clientSocket < 0) {
         return;
@@ -416,10 +372,10 @@ void handle_read_passive(struct selector_key *key) {
         return;
     }
 
-    clientHandler->handle_read = client_handler_read;
-    clientHandler->handle_write = client_handler_write;
-    clientHandler->handle_close = client_handler_close;
-    clientHandler->handle_block = client_handler_block;
+    clientHandler->handle_read = client_handler_monitoring_read;
+    clientHandler->handle_write = client_handler_monitoring_write;
+    clientHandler->handle_close = client_handler_monitoring_close;
+    clientHandler->handle_block = client_handler_monitoring_block;
 
     log(DEBUG, "Size of MonitoringClientData: %zu bytes", sizeof(struct MonitoringClientData));
     log(DEBUG, "Size of buffer field: %zu bytes", sizeof(((MonitoringClientData*)0)->buffer));
@@ -448,79 +404,4 @@ void handle_read_passive(struct selector_key *key) {
     }
 
     log(DEBUG, "Client fd=%d registered successfully in selector", clientSocket);
-}
-
-int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
-        return 1;
-    }
-
-    setLogLevel(DEBUG);
-    
-    // Ignorar SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
-    
-    log(INFO, "Starting SOCKS5 server on port %s", argv[1]);
-
-    load_users();
-    log(INFO, "Users loaded successfully");
-
-    int servSock = setupTCPServerSocket(argv[1]);
-    if (servSock < 0) {
-        log(FATAL, "Failed to setup TCP server socket");
-        return 1;
-    }
-
-    if (selector_fd_set_nio(servSock) < 0) {
-        log(FATAL, "Could not set O_NONBLOCK on listening socket");
-        close(servSock);
-        return 1;
-    }
-
-    const struct selector_init conf = {
-        .signal = SIGALRM,
-        .select_timeout = { .tv_sec = 1, .tv_nsec = 0 }
-    };
-    
-    if (selector_init(&conf) != SELECTOR_SUCCESS) {
-        log(FATAL, "Failed to initialize selector");
-        close(servSock);
-        return 1;
-    }
-
-    fd_selector selector = selector_new(SELECTOR_CAPACITY);
-    if (selector == NULL) {
-        log(FATAL, "Failed to create selector");
-        close(servSock);
-        selector_close();
-        return 1;
-    }
-
-    static const fd_handler listen_handler = {
-        .handle_read  = handle_read_passive,
-        .handle_write = NULL,
-        .handle_block = NULL,
-        .handle_close = NULL
-    };
-
-    if (selector_register(selector, servSock, &listen_handler, OP_READ, NULL) != SELECTOR_SUCCESS) {
-        log(FATAL, "Failed to register listening socket in selector");
-        selector_destroy(selector);
-        selector_close();
-        close(servSock);
-        return 1;
-    }
-
-    log(INFO, "Server started successfully, entering main loop");
-
-    while (selector_select(selector) == SELECTOR_SUCCESS) {
-        // El selector maneja todos los eventos
-    }
-
-    log(INFO, "Server shutting down");
-    selector_destroy(selector);
-    selector_close();
-    close(servSock);
-    return 0;
 }

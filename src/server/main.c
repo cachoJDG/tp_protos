@@ -13,6 +13,8 @@
 #include "../stm.h"
 #include <pthread.h>
 #include "socks5.h"
+#include "../users/users.h"
+#include "../monitoring/monitoring-server.h"
 
 #define MAXPENDING 32 // Maximum outstanding connection requests
 #define SELECTOR_CAPACITY 1024
@@ -94,20 +96,35 @@ int main(int argc, char *argv[]) {
     }
     log(INFO, "Map created with %d elements", map_size(hashmap));
 
-    if (argc > 2) {
-        log(FATAL, "usage: %s <Server Port>", argv[0]);
+    if (argc != 3) {
+        log(FATAL, "usage: %s <SOCKS5 Port> <Monitoring Port>", argv[0]);
+        return 1;
     }
 
-    int servSock = setupTCPServerSocket((argc == 1) ? "1024" : argv[1]);
+    load_users();
+    log(INFO, "Users loaded successfully");
+
+    int servSock = setupTCPServerSocket(argv[1]);
     if (servSock < 0) return 1;
 
-    // registrar sigterm es útil para terminar el programa normalmente.
-    // esto ayuda mucho en herramientas como valgrind.
+    int monitoringSock = setupTCPServerSocket(argv[2]);
+    if (monitoringSock < 0) {
+        close(servSock);
+        return 1;
+    }
+
     signal(SIGTERM, sigterm_handler);
     signal(SIGINT,  sigterm_handler);
 
     if (selector_fd_set_nio(servSock) < 0) {
         log(FATAL, "Could not set O_NONBLOCK on listening socket");
+    }
+
+    if (selector_fd_set_nio(monitoringSock) < 0) {
+        log(FATAL, "Could not set O_NONBLOCK on monitoring socket");
+        close(servSock);
+        close(monitoringSock);
+        return 1;
     }
 
     const struct selector_init conf = {
@@ -123,16 +140,32 @@ int main(int argc, char *argv[]) {
         .handle_block = NULL,
         .handle_close = NULL
     };
+
+    static const fd_handler monitoring_listen_handler = {
+        .handle_read  = handle_read_passive_monitoring,
+        .handle_write = NULL,
+        .handle_block = NULL,
+        .handle_close = NULL
+    };
+
     selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
+    selector_register(selector, monitoringSock, &monitoring_listen_handler, OP_READ, NULL);
+
+    log(INFO, "SOCKS5 server listening on port %s", argv[1]);
+    log(INFO, "Monitoring server listening on port %s", argv[2]);
 
     while (selector_select(selector) == SELECTOR_SUCCESS) {
         ; 
     }
 
     selector_destroy(selector);
-	selector_close();
+    selector_close();
     if(servSock >= 0) {
         close(servSock);
+    }
+
+    if(monitoringSock >= 0) {
+        close(monitoringSock);
     }
     return 0;
 }

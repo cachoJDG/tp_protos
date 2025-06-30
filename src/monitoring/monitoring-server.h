@@ -43,13 +43,6 @@ typedef struct MonitoringClientData {
 // Public function declarations
 
 /**
- * Sets up a TCP server socket on the specified service/port
- * @param service Port number or service name
- * @return Socket file descriptor on success, -1 on error
- */
-int setupTCPServerSocket(const char *service);
-
-/**
  * Accepts a TCP connection from a client
  * @param servSock Server socket file descriptor
  * @return Client socket file descriptor on success, -1 on error
@@ -72,27 +65,27 @@ void print_hex_compact(const char* label, const unsigned char* buffer, size_t le
 char *getStringFromSize(char *buffer);
 
 // State machine handlers
-void stm_read_arrival(unsigned state, struct selector_key *key);
-void stm_error_arrival(unsigned state, struct selector_key *key);
-void stm_done_arrival(unsigned state, struct selector_key *key);
+void stm_read_monitoring_arrival(unsigned state, struct selector_key *key);
+void stm_error_monitoring_arrival(unsigned state, struct selector_key *key);
+void stm_done_monitoring_arrival(unsigned state, struct selector_key *key);
 
 // Protocol state handlers
-enum StateMonitoring stm_login_read(struct selector_key *key);
-enum StateMonitoring stm_login_write(struct selector_key *key);
-enum StateMonitoring stm_request_read(struct selector_key *key);
-enum StateMonitoring stm_request_write(struct selector_key *key);
+enum StateMonitoring stm_login_monitoring_read(struct selector_key *key);
+enum StateMonitoring stm_login_monitoring_write(struct selector_key *key);
+enum StateMonitoring stm_request_monitoring_read(struct selector_key *key);
+enum StateMonitoring stm_request_monitoring_write(struct selector_key *key);
 
 // Client connection handlers
-void client_handler_read(struct selector_key *key);
-void client_handler_write(struct selector_key *key);
-void client_handler_block(struct selector_key *key);
-void client_handler_close(struct selector_key *key);
+void client_handler_monitoring_read(struct selector_key *key);
+void client_handler_monitoring_write(struct selector_key *key);
+void client_handler_monitoring_block(struct selector_key *key);
+void client_handler_monitoring_close(struct selector_key *key);
 
 /**
  * Handles new incoming connections on the passive socket
  * @param key Selector key for the listening socket
  */
-void handle_read_passive(struct selector_key *key);
+void handle_read_passive_monitoring(struct selector_key *key);
 
 // External global variables (if needed by other modules)
 extern struct sockaddr_storage _localAddr;
