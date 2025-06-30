@@ -12,8 +12,6 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 
-#define MAX_ADDR_BUFFER 128
-#define BUFSIZE 512
 #define SOCK_VERSION 5
 
 int tcpClientSocket(const char *host, const char *service) {

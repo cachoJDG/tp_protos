@@ -14,8 +14,8 @@
 #include <stdlib.h>
 
 #define MAXPENDING 5
-#define BUFSIZE 256
-#define MAX_ADDR_BUFFER 128
+// #define BUFSIZEMONITORING 256
+// #define MAX_ADDR_BUFFER_MONITORING 128
 #define SELECTOR_CAPACITY 256
 
 static char addrBuffer[MAX_ADDR_BUFFER];
@@ -43,14 +43,14 @@ enum {
     CHANGE_PASSWORD = 4
 } Commands;
 
-enum StateSocksv5 {
-    STM_LOGIN_READ,
-    STM_LOGIN_WRITE,
-    STM_REQUEST_READ,
-    STM_REQUEST_WRITE,
-    STM_DONE,
-    STM_ERROR,
-};
+// enum StateSocksv5 {
+//     STM_LOGIN_READ,
+//     STM_LOGIN_WRITE,
+//     STM_REQUEST_READ,
+//     STM_REQUEST_WRITE,
+//     STM_DONE,
+//     STM_ERROR,
+// };
 
 void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
     if (current_level <= DEBUG) {  // Solo mostrar en modo DEBUG

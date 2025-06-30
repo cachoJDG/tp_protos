@@ -23,7 +23,7 @@ char * levelDescription(LOG_LEVEL level);
 
 // Debe ser una macro para poder obtener nombre y linea de archivo. 
 #define log(level, fmt, ...)   {if(level >= current_level) {\
-	fprintf (stderr, "%s %s %s: %s:%d, ",__DATE__, __TIME__, levelDescription(level), __FILE__, __LINE__); \
+	fprintf (stderr, "%s %s [%s] %s:%d, ",__DATE__, __TIME__, levelDescription(level), __FILE__, __LINE__); \
 	fprintf(stderr, fmt, ##__VA_ARGS__); \
 	fprintf(stderr,"\n"); }\
 	if ( level==FATAL) exit(1);}
