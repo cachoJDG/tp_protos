@@ -70,7 +70,10 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		sendGetMetricsCommand(clientSocket);
 	}
 	else {
-		fprintf(stderr, "Unknown command\n");
+		fprintf(stderr, "Unknown command\nSome examples:\nLIST USERS\nADD USER <username> <password>\nREMOVE USER <username>\nCHANGE PASSWORD <username> <newpassword>\nGET METRICS\n");
+		close(clientSocket);
+		free(commands);
+		exit(1);
 	}
 }
 
