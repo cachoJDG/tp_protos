@@ -19,8 +19,9 @@
 #include "../buffer.h"
 
 #define BUFSIZE (4096)
-#define MAX_ADDR_BUFFER 64
+#define MAX_ADDR_BUFFER (64)
 #define USERNAME_MAX_LENGTH (256)
+#define SOCKS_LOGIN_VERSION (1)
 
 typedef enum AuthMethod {
     AUTH_NONE = 0x00,
@@ -33,14 +34,13 @@ typedef struct ClientData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
     int           outgoing_fd; 
     struct addrinfo *connectAddresses;
-    char username[USERNAME_MAX_LENGTH];
-    char buffer[BUFSIZE];
-    char clientBufferData[BUFSIZE];
-    char remoteBufferData[BUFSIZE];
     ssize_t bytes;
     struct state_machine stm;
     buffer client_buffer;  // buffer para almacenar datos del socket del cliente
+    uint8_t clientBufferData[BUFSIZE];
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
+    uint8_t remoteBufferData[BUFSIZE];
+    char username[USERNAME_MAX_LENGTH];
     // parsing
     AuthMethod authMethod;
     //

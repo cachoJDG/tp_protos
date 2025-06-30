@@ -22,7 +22,6 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     int clientSocket = key->fd;
     int remoteSocket = clientData->outgoing_fd;
 
-    buffer_init(&clientData->client_buffer, BUFSIZE, clientData->clientBufferData);
     buffer_init(&clientData->outgoing_buffer, BUFSIZE, clientData->remoteBufferData);
 
     // Los buffers se comparten entre el cliente y el servidor remoto

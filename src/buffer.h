@@ -145,5 +145,8 @@ buffer_can_read(buffer *b);
 bool
 buffer_can_write(buffer *b);
 
+/* lee n bytes del buffer y los escribe en el buffer de entrada provisto */
+bool 
+buffer_read_bytes(buffer *b, uint8_t dest[], size_t bytes);
 
 #endif

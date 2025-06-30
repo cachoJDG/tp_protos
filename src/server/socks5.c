@@ -96,30 +96,32 @@ void handle_read_passive(struct selector_key *key) {
     clientData->client_fd   = clientSocket;
     clientData->outgoing_fd = -1;
     stm_init(&clientData->stm);
+    buffer_init(&clientData->client_buffer, BUFSIZE, clientData->clientBufferData);
 
     selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData);
 }
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    memset(clientData->buffer, 0, sizeof(clientData->buffer));
 }
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
-    ClientData *clientData = key->data; // TODO: validar si nos mandaron menos. ahora crashearia 
+    ClientData *clientData = key->data;
 
-    ssize_t bytesRead = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    size_t bufferLimit = 0;
+    uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
+    ssize_t bytesRead = recv(key->fd, clientBuffer, bufferLimit, 0);
     if(bytesRead <= 0) {
         return STM_ERROR;
     }
 
-    int index = 0;
-    int version = clientData->buffer[index++];
-    uint8_t methodCount = clientData->buffer[index++];
+    buffer_write_adv(&clientData->client_buffer, bytesRead);
+    uint8_t socksVersion = buffer_read(&clientData->client_buffer);
+    uint8_t methodCount = buffer_read(&clientData->client_buffer);
 
     clientData->authMethod = AUTH_NO_ACCEPTABLE;
     for(int i = 0; i < methodCount; i++) {
-        AuthMethod authMethod = clientData->buffer[index++];
+        AuthMethod authMethod = buffer_read(&clientData->client_buffer);
         if(authMethod == AUTH_USER_PASSWORD) {
             clientData->authMethod = AUTH_USER_PASSWORD;
             break;
@@ -130,7 +132,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     }
     char *authStr = (clientData->authMethod == AUTH_USER_PASSWORD) ? "user password" 
                   : ((clientData->authMethod == AUTH_NONE) ? "none" : "invalid");
-    log(DEBUG, "version=%d method='%s'", version, authStr);
+    log(DEBUG, "version=%d method='%s'", socksVersion, authStr);
 
     selector_set_interest_key(key, OP_WRITE); 
 
@@ -140,7 +142,6 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
-    ssize_t bytes = 0;
     switch (clientData->authMethod)
     {
     case AUTH_NONE:
@@ -151,6 +152,7 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
         send(key->fd, "\x05\x02", 2, 0);
         selector_set_interest_key(key, OP_READ); 
         return STM_LOGIN_READ;
+    case AUTH_GSSAPI:
     default:
         return STM_ERROR;
     }
@@ -158,21 +160,27 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
 
 void stm_login_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    memset(clientData->buffer, 0, BUFSIZE);
 }
 
 StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     char password[USERNAME_MAX_LENGTH] = {0};
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    size_t bufferLimit = 0;
+    uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
+    ssize_t bytesRead = recv(key->fd, clientBuffer, bufferLimit, 0);
 
-    int index = 1;
-    uint8_t usernameLen = clientData->buffer[index++];
-    memcpy(clientData->username, &clientData->buffer[index], usernameLen);
+    buffer_write_adv(&clientData->client_buffer, bytesRead);
+    uint8_t loginVersion = buffer_read(&clientData->client_buffer);
+    if(loginVersion != SOCKS_LOGIN_VERSION) {
+        log(ERROR, "invalid login version %d", loginVersion);
+        return STM_ERROR;
+    }
+    uint8_t usernameLen = buffer_read(&clientData->client_buffer);
+    buffer_read_bytes(&clientData->client_buffer, clientData->username, usernameLen);
     clientData->username[usernameLen] = '\0';
-    index += usernameLen;
-    uint8_t passwordLen = clientData->buffer[index++];
-    memcpy(password, &clientData->buffer[index], passwordLen);
+
+    uint8_t passwordLen = buffer_read(&clientData->client_buffer);
+    buffer_read_bytes(&clientData->client_buffer, password, passwordLen);
     log(DEBUG, "username[%d]='%s' password[%d]='%s'", usernameLen, clientData->username, passwordLen, password);
 
     selector_set_interest_key(key, OP_WRITE); 

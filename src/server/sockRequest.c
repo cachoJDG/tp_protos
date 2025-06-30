@@ -51,17 +51,19 @@ void *dns_thread_func(void *arg) {
 
 void stm_request_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    memset(clientData->buffer, 0, BUFSIZE);
 }
 
 StateSocksv5 stm_request_read(struct selector_key *key) {
     ClientData *clientData = key->data;
 
-    ssize_t bytes = recv(key->fd, clientData->buffer, BUFSIZE, 0);
+    size_t bufferLimit = 0;
+    uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
+    ssize_t bytesRead = recv(key->fd, clientBuffer, bufferLimit, 0);
+    buffer_write_adv(&clientData->client_buffer, bytesRead);
     // TODO: Ojo que está ignorando la versión (debería rechazar si la versión es incorrecta)
     // Para rechazar deberíamos mandar un mensaje que diga "05 Connection Refused"
-    int index = 1;
-    CommandSocksv5 cmd = clientData->buffer[index++];
+    uint8_t sockVersion = buffer_read(&clientData->client_buffer);
+    CommandSocksv5 cmd = buffer_read(&clientData->client_buffer);
     switch (cmd) {
         case CMD_CONNECT:
             
@@ -75,25 +77,21 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             return STM_ERROR;
     }
     
-    int reserved = clientData->buffer[index++]; // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
-    AddressTypeSocksv5 addressType = clientData->buffer[index++]; 
-    uint32_t destinationIPv4;
+    int reserved = buffer_read(&clientData->client_buffer); // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
+    AddressTypeSocksv5 addressType = buffer_read(&clientData->client_buffer);
     char hostname[MAX_ADDR_BUFFER] = {0};
     int destinationPort = 0;
 
-    struct addrinfo addrHints;
-    memset(&addrHints, 0, sizeof(addrHints));
+    struct addrinfo addrHints = {0};
     addrHints.ai_socktype = SOCK_STREAM;
     addrHints.ai_protocol = IPPROTO_TCP;
     switch (addressType) {
         case SOCKSV5_ADDR_TYPE_IPV4: {
             addrHints.ai_family = AF_INET;
             struct in_addr addr;
-            memcpy(&addr, &clientData->buffer[index], 4);
-            // destinationIPv4 = htonl(*(uint32_t *)&clientData->buffer[index]);
-            // printf("destAddress=%x ", destinationIPv4);
-            index += 4;
-            destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
+            buffer_read_bytes(&clientData->client_buffer, (uint8_t *)&addr, 4); // ipv4
+            buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
+            destinationPort = ntohs(*(uint16_t *)hostname);
             inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
             break;
         }
@@ -103,12 +101,11 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
                 log(ERROR, "malloc: %s", strerror(errno));
                 return STM_ERROR;
             }
-            size_t domainNameSize = clientData->buffer[index++];
-            strncpy(job->host, &clientData->buffer[index], sizeof(job->host) - 1);
-            index += domainNameSize;
+            uint8_t domainNameSize = buffer_read(&clientData->client_buffer);
+            buffer_read_bytes(&clientData->client_buffer, job->host, domainNameSize);
 
-            destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
-            index += 2;
+            buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
+            destinationPort = ntohs(*(uint16_t *)hostname);
 
             pthread_t tid;
             snprintf(job->service, sizeof(job->service) - 1, "%u", destinationPort);
@@ -129,9 +126,11 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         case SOCKSV5_ADDR_TYPE_IPV6: {
             addrHints.ai_family = AF_INET6;
             struct in6_addr addr;
-            memcpy(&addr, &clientData->buffer[index], 16);
+            buffer_read_bytes(&clientData->client_buffer, hostname, 16); // 
+            buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
+            destinationPort = ntohs(*(uint16_t *)hostname);
             inet_ntop(AF_INET6, &addr, hostname, INET6_ADDRSTRLEN);
-            index += 16;
+
             break;
         }
         default:
@@ -143,8 +142,6 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
     char service[6] = {0};
     sprintf(service, "%d", destinationPort);
     
-    // uint16_t destinationPort = ntohs(*(uint16_t *)&clientData->buffer[index]);
-    index += 2;
     int getAddrStatus = getaddrinfo(hostname, service, &addrHints, &clientData->connectAddresses);
     if(getAddrStatus != 0) {
         log(ERROR, "getaddrinfo() failed");
