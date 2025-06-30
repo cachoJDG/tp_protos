@@ -8,7 +8,7 @@ int sendListUsersCommand(int clientSocket) {
 
 int sendAddUserCommand(int clientSocket, char ** commands) {
     
-    char ans[BUFSIZE] = {0};
+    char ans[BUFSIZE_MONITORING] = {0};
     ans[0] = ADD_USER;
     int index = 1;
     int usernameLength = strlen(commands[2]);
@@ -25,7 +25,7 @@ int sendAddUserCommand(int clientSocket, char ** commands) {
 }
 
 int sendRemoveUserCommand(int clientSocket, char ** commands) {
-    char ans[BUFSIZE] = {0};
+    char ans[BUFSIZE_MONITORING] = {0};
     ans[0] = REMOVE_USER;
     
     int index = 1;
@@ -38,7 +38,7 @@ int sendRemoveUserCommand(int clientSocket, char ** commands) {
 }
 
 int sendChangePasswordCommand(int clientSocket, char ** commands) {
-    char ans[BUFSIZE] = {0};
+    char ans[BUFSIZE_MONITORING] = {0};
     ans[0] = CHANGE_PASSWORD;
     
     int index = 1;

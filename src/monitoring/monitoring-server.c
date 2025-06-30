@@ -1,59 +1,25 @@
-#include <sys/socket.h>
 #include <errno.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <netdb.h>
 #include <string.h>
 #include "../shared/logger.h"
 #include "../shared/util.h"
-#include "../selector.h"
 #include "../parser.h"
 #include <signal.h>
-#include "../stm.h"
 #include "../users/users.h"
 #include <stdlib.h>
+#include "monitoring-server.h"
 
 #define MAXPENDING 5
-// #define BUFSIZEMONITORING 256
-// #define MAX_ADDR_BUFFER_MONITORING 128
+#define BUFSIZE_MONITORING 512
+#define MAX_ADDR_BUFFER_MONITORING 128
 #define SELECTOR_CAPACITY 256
 
-static char addrBuffer[MAX_ADDR_BUFFER];
-
-typedef struct MonitoringClientData {
-    char buffer[BUFSIZE];
-    ssize_t bytes;
-    struct state_machine stm;
-    char username[64];
-    char password[64];
-    int connection_should_close;
-} MonitoringClientData;
-
+static char addrBuffer[MAX_ADDR_BUFFER_MONITORING];
 struct sockaddr_storage _localAddr;
 
-void client_handler_read(struct selector_key *key);
-void client_handler_write(struct selector_key *key);
-void client_handler_block(struct selector_key *key);
-void client_handler_close(struct selector_key *key);
-
-enum {
-    LIST_USERS = 1,
-    ADD_USER = 2,
-    REMOVE_USER = 3,
-    CHANGE_PASSWORD = 4
-} Commands;
-
-// enum StateSocksv5 {
-//     STM_LOGIN_READ,
-//     STM_LOGIN_WRITE,
-//     STM_REQUEST_READ,
-//     STM_REQUEST_WRITE,
-//     STM_DONE,
-//     STM_ERROR,
-// };
-
 void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
-    if (current_level <= DEBUG) {  // Solo mostrar en modo DEBUG
+    if (current_level <= DEBUG) {
         printf("%s (%zu bytes): ", label, length);
         for (size_t i = 0; i < length; i++) {
             printf("%02X", buffer[i]);
@@ -87,7 +53,6 @@ int setupTCPServerSocket(const char *service) {
             continue;
         }
 
-        // Agregar SO_REUSEADDR para evitar "Address already in use"
         int opt = 1;
         if (setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
             log(DEBUG, "setsockopt SO_REUSEADDR failed: %s", strerror(errno));
@@ -132,7 +97,7 @@ int acceptTCPConnection(int servSock) {
 
 void stm_read_arrival(unsigned state, struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
-    memset(MonitoringClientData->buffer, 0, BUFSIZE);
+    memset(MonitoringClientData->buffer, 0, BUFSIZE_MONITORING);
     log(DEBUG, "Entering state %d for client fd=%d", state, key->fd);
 }
 
@@ -148,17 +113,19 @@ void stm_done_arrival(unsigned state, struct selector_key *key) {
     MonitoringClientData->connection_should_close = 1;
 }
 
-enum StateSocksv5 stm_login_read(struct selector_key *key) {
+enum StateMonitoring stm_login_read(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
-    ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE - 1, 0);
+    ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE_MONITORING - 1, 0);
     
     if (bytes <= 0) {
-        return STM_ERROR;
+        log(ERROR, "Failed to receive login data from client fd=%d", key->fd);
+        return STM_MONITORING_ERROR;
     }
+    
     char *message = MonitoringClientData->buffer;
-    if (bytes < 3) {  // version + username length + password length
+    if (bytes < 3) {
         log(ERROR, "Invalid login message length %zd from client fd=%d", bytes, key->fd);
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
 
     int index = 1;
@@ -166,7 +133,7 @@ enum StateSocksv5 stm_login_read(struct selector_key *key) {
     
     if (usernameLength <= 0 || usernameLength >= 64 || index + usernameLength >= bytes) {
         log(ERROR, "Invalid username length %d from client fd=%d", usernameLength, key->fd);
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
 
     memcpy(MonitoringClientData->username, message + index, usernameLength);
@@ -175,14 +142,14 @@ enum StateSocksv5 stm_login_read(struct selector_key *key) {
     
     if (index >= bytes) {
         log(ERROR, "Invalid message format from client fd=%d", key->fd);
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
     
     int passwordLength = (unsigned char)message[index++];
     
     if (passwordLength <= 0 || passwordLength >= 64 || index + passwordLength > bytes) {
         log(ERROR, "Invalid password length %d from client fd=%d", passwordLength, key->fd);
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
 
     memcpy(MonitoringClientData->password, message + index, passwordLength);
@@ -190,24 +157,24 @@ enum StateSocksv5 stm_login_read(struct selector_key *key) {
     log(INFO, "Login attempt from client fd=%d, username: %s", key->fd, MonitoringClientData->username);
 
     selector_set_interest_key(key, OP_WRITE);
-    return STM_LOGIN_WRITE;
+    return STM_LOGIN_MONITORING_WRITE;
 }
 
-enum StateSocksv5 stm_login_write(struct state_machine *stm, struct selector_key *key) {
+enum StateMonitoring stm_login_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
 
     if (validate_login(MonitoringClientData->username, MonitoringClientData->password)) {
         log(DEBUG, "Login successful for user: %s", MonitoringClientData->username);
         char message[2] = {1, 1};
-        ssize_t sent = send(key->fd, message, 2, 0);  // Enviar 2 bytes, no 1
+        ssize_t sent = send(key->fd, message, 2, 0);
         
         if (sent < 0) {
             log(ERROR, "Failed to send login success response to client fd=%d: %s", key->fd, strerror(errno));
-            return STM_ERROR;
+            return STM_MONITORING_ERROR;
         }
 
         selector_set_interest_key(key, OP_READ);
-        return STM_REQUEST_READ;
+        return STM_REQUEST_MONITORING_READ;
     } else {
         log(DEBUG, "Login failed for user: %s", MonitoringClientData->username);
         char message[2] = {1, 0};
@@ -217,13 +184,13 @@ enum StateSocksv5 stm_login_write(struct state_machine *stm, struct selector_key
             log(ERROR, "Failed to send login failure response to client fd=%d: %s", key->fd, strerror(errno));
         }
 
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
 }
 
-enum StateSocksv5 stm_request_read(struct selector_key *key) {
+enum StateMonitoring stm_request_read(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
-    ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE - 1, 0);
+    ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE_MONITORING - 1, 0);
     
     if (bytes <= 0) {
         if (bytes == 0) {
@@ -231,15 +198,15 @@ enum StateSocksv5 stm_request_read(struct selector_key *key) {
         } else {
             log(ERROR, "recv() failed in request_read for fd=%d: %s", key->fd, strerror(errno));
         }
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
 
     log(DEBUG, "Received %zd bytes for request from client fd=%d", bytes, key->fd);
     print_hex_compact("Request data received", (unsigned char*)MonitoringClientData->buffer, bytes);
 
-    MonitoringClientData->bytes = bytes;  // Guardar el número de bytes recibidos
+    MonitoringClientData->bytes = bytes;
     selector_set_interest_key(key, OP_WRITE);
-    return STM_REQUEST_WRITE;
+    return STM_REQUEST_MONITORING_WRITE;
 }
 
 char *getStringFromSize(char *buffer) {
@@ -261,12 +228,12 @@ char *getStringFromSize(char *buffer) {
     return str;
 }
 
-enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_key *key) {
+enum StateMonitoring stm_request_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     
     if (MonitoringClientData->bytes <= 0) {
         log(ERROR, "No data to process in request_write for fd=%d", key->fd);
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
     
     char command = MonitoringClientData->buffer[0];
@@ -284,7 +251,7 @@ enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_k
         case ADD_USER: {
             log(DEBUG, "Comando ADD_USER recibido");
             
-            if (MonitoringClientData->bytes < 4) {  // Mínimo: command + username_len + username + password_len
+            if (MonitoringClientData->bytes < 4) {
                 log(ERROR, "Invalid ADD_USER message length");
                 snprintf(response, sizeof(response), "Error: Invalid message format\n");
                 break;
@@ -317,7 +284,7 @@ enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_k
         case REMOVE_USER: {
             log(DEBUG, "Comando REMOVE_USER recibido");
             
-            if (MonitoringClientData->bytes < 3) {  // Mínimo: command + username_len + username
+            if (MonitoringClientData->bytes < 3) {
                 log(ERROR, "Invalid REMOVE_USER message length");
                 snprintf(response, sizeof(response), "Error: Invalid message format\n");
                 break;
@@ -347,47 +314,47 @@ enum StateSocksv5 stm_request_write(struct state_machine *stm, struct selector_k
     ssize_t sent = send(key->fd, response, strlen(response), 0);
     if (sent < 0) {
         log(ERROR, "Failed to send response to client fd=%d: %s", key->fd, strerror(errno));
-        return STM_ERROR;
+        return STM_MONITORING_ERROR;
     }
     
     log(DEBUG, "Sent %zd bytes response to client fd=%d", sent, key->fd);
-    return STM_DONE;
+    return STM_MONITORING_DONE;
 }
 
-static const struct state_definition CLIENT_STATE_TABLE[] = {
+static const struct state_definition CLIENT_STATE_MONITORING_TABLE[] = {
     {
-        .state = STM_LOGIN_READ,
+        .state = STM_LOGIN_MONITORING_READ,
         .on_arrival = stm_read_arrival,
         .on_read_ready = stm_login_read,
     },
     {
-        .state = STM_LOGIN_WRITE,
+        .state = STM_LOGIN_MONITORING_WRITE,
         .on_write_ready = stm_login_write,
     },
     {
-        .state = STM_REQUEST_READ,
+        .state = STM_REQUEST_MONITORING_READ,
         .on_arrival = stm_read_arrival,
         .on_read_ready = stm_request_read,
     },
     {
-        .state = STM_REQUEST_WRITE,
+        .state = STM_REQUEST_MONITORING_WRITE,
         .on_write_ready = stm_request_write,
     },
     {
-        .state = STM_DONE,
+        .state = STM_MONITORING_DONE,
         .on_arrival = stm_done_arrival,
     },
     {
-        .state = STM_ERROR,
+        .state = STM_MONITORING_ERROR,
         .on_arrival = stm_error_arrival,
     },
 };
 
 void client_handler_read(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
-    enum StateSocksv5 state = stm_handler_read(&MonitoringClientData->stm, key);
+    enum StateMonitoring state = stm_handler_read(&MonitoringClientData->stm, key);
     
-    if (state == STM_ERROR || MonitoringClientData->connection_should_close) {
+    if (state == STM_MONITORING_ERROR || MonitoringClientData->connection_should_close) {
         log(DEBUG, "Closing connection for client fd=%d (state=%d, should_close=%d)", 
             key->fd, state, MonitoringClientData->connection_should_close);
         selector_unregister_fd(key->s, key->fd);
@@ -397,9 +364,9 @@ void client_handler_read(struct selector_key *key) {
 
 void client_handler_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
-    enum StateSocksv5 state = stm_handler_write(&MonitoringClientData->stm, key);
+    enum StateMonitoring state = stm_handler_write(&MonitoringClientData->stm, key);
     
-    if (state == STM_ERROR || MonitoringClientData->connection_should_close) {
+    if (state == STM_MONITORING_ERROR || MonitoringClientData->connection_should_close) {
         log(DEBUG, "Closing connection for client fd=%d (state=%d, should_close=%d)", 
             key->fd, state, MonitoringClientData->connection_should_close);
         selector_unregister_fd(key->s, key->fd);
@@ -409,9 +376,9 @@ void client_handler_write(struct selector_key *key) {
 
 void client_handler_block(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
-    enum StateSocksv5 state = stm_handler_block(&MonitoringClientData->stm, key);
+    enum StateMonitoring state = stm_handler_block(&MonitoringClientData->stm, key);
     
-    if (state == STM_ERROR || MonitoringClientData->connection_should_close) {
+    if (state == STM_MONITORING_ERROR || MonitoringClientData->connection_should_close) {
         log(DEBUG, "Closing connection for client fd=%d (state=%d, should_close=%d)", 
             key->fd, state, MonitoringClientData->connection_should_close);
         selector_unregister_fd(key->s, key->fd);
@@ -425,7 +392,6 @@ void client_handler_close(struct selector_key *key) {
     
     close(key->fd);
     
-    // Liberar memoria
     if (MonitoringClientData) {
         free(MonitoringClientData);
     }
@@ -434,10 +400,9 @@ void client_handler_close(struct selector_key *key) {
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
     if (clientSocket < 0) {
-        return;  // Error ya loggeado en acceptTCPConnection
+        return;
     }
 
-    // Configurar socket como no-bloqueante
     if (selector_fd_set_nio(clientSocket) < 0) {
         log(ERROR, "Could not set O_NONBLOCK on client socket fd=%d", clientSocket);
         close(clientSocket);
@@ -456,17 +421,20 @@ void handle_read_passive(struct selector_key *key) {
     clientHandler->handle_close = client_handler_close;
     clientHandler->handle_block = client_handler_block;
 
-    MonitoringClientData *MonitoringClientData = calloc(1, sizeof(MonitoringClientData));
+    log(DEBUG, "Size of MonitoringClientData: %zu bytes", sizeof(struct MonitoringClientData));
+    log(DEBUG, "Size of buffer field: %zu bytes", sizeof(((MonitoringClientData*)0)->buffer));
+    MonitoringClientData *MonitoringClientData = calloc(1, sizeof(struct MonitoringClientData));
     if (!MonitoringClientData) {
         log(ERROR, "Failed to allocate memory for client data");
         free(clientHandler);
         close(clientSocket);
         return;
     }
+    log(DEBUG, "Allocated %zu bytes for MonitoringClientData", sizeof(MonitoringClientData));
 
-    MonitoringClientData->stm.initial = STM_LOGIN_READ;
-    MonitoringClientData->stm.max_state = STM_ERROR;
-    MonitoringClientData->stm.states = CLIENT_STATE_TABLE;
+    MonitoringClientData->stm.initial = STM_LOGIN_MONITORING_READ;
+    MonitoringClientData->stm.max_state = STM_MONITORING_ERROR;
+    MonitoringClientData->stm.states = CLIENT_STATE_MONITORING_TABLE;
     MonitoringClientData->connection_should_close = 0;
 
     stm_init(&MonitoringClientData->stm);
@@ -488,7 +456,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    setLogLevel(DEBUG); //INFO for production, DEBUG for development
+    setLogLevel(DEBUG);
+    
+    // Ignorar SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
+    
     log(INFO, "Starting SOCKS5 server on port %s", argv[1]);
 
     load_users();

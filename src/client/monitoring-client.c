@@ -16,7 +16,7 @@
 #include "monitoring-client.h"
 
 int tcpClientSocket(const char *host, const char *service) {
-	char addrBuffer[MAX_ADDR_BUFFER] = {0};
+	char addrBuffer[MAX_ADDR_BUFFER_MONITORING] = {0};
 	struct addrinfo addrCriteria;                   // Criteria for address match
 	memset(&addrCriteria, 0, sizeof(addrCriteria)); // Zero out structure
 	addrCriteria.ai_family = AF_UNSPEC;             // v4 or v6 is OK
@@ -78,7 +78,7 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 
 bool authClient(int clientSocket) {
 
-	char* token = getenv("TOKEN");
+	char* token = getenv("MONITORING_TOKEN");
 	if (token == NULL) {
 		fprintf(stderr, "No token provided for connection\n");
 		return -1;
@@ -97,9 +97,9 @@ bool authClient(int clientSocket) {
 		return false;
 	}
 
-    char message[BUFSIZE] = { 0 }; // TODO: verificar que clientName y clientPassword no excedan. BUFFER OVERFLOW
+    char message[BUFSIZE_MONITORING] = { 0 }; // TODO: verificar que clientName y clientPassword no excedan. BUFFER OVERFLOW
     size_t index = 0;
-    message[index++] = SOCK_VERSION;
+    message[index++] = MONITORING_VERSION;
 
     size_t clientNameLength = strlen(clientName);
     message[index++] = clientNameLength;
@@ -148,10 +148,10 @@ void loadFileUsers(){
 }
 
 void readServerResponse(int clientSocket) {
-    char buffer[BUFSIZE];
+    char buffer[BUFSIZE_MONITORING];
     ssize_t bytesReceived;
     
-    bytesReceived = recv(clientSocket, buffer, BUFSIZE - 1, 0);
+    bytesReceived = recv(clientSocket, buffer, BUFSIZE_MONITORING - 1, 0);
     
     if (bytesReceived > 0) {
         buffer[bytesReceived] = '\0'; // Null-terminate

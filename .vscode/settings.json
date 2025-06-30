@@ -10,6 +10,8 @@
         "new": "c",
         "util.h": "c",
         "clientcmdparser.h": "c",
-        "inet.h": "c"
+        "inet.h": "c",
+        "users.h": "c",
+        "monitoring-server.h": "c"
     }
 }
