@@ -9,6 +9,7 @@
 #include "../users/users.h"
 #include <stdlib.h>
 #include "monitoring-server.h"
+#include "monitoringServerUtils.h"
 
 #define MAXPENDING 5
 #define BUFSIZE_MONITORING 512
@@ -165,25 +166,6 @@ enum StateMonitoring stm_request_monitoring_read(struct selector_key *key) {
     return STM_REQUEST_MONITORING_WRITE;
 }
 
-char *getStringFromSize(char *buffer) {
-    if (!buffer) return NULL;
-    
-    unsigned char size = (unsigned char)buffer[0];
-    if (size == 0) return NULL;
-    
-    char *str = malloc(size + 1);
-    if (str == NULL) {
-        log(ERROR, "malloc failed in getStringFromSize");
-        return NULL;
-    }
-    
-    memcpy(str, buffer + 1, size);
-    str[size] = '\0';
-    
-    log(DEBUG, "Parsed string: %s (length: %d)", str, size);
-    return str;
-}
-
 enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     MonitoringClientData *MonitoringClientData = key->data;
     
@@ -197,74 +179,34 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     
     log(DEBUG, "Processing command %d for client fd=%d", command, key->fd);
     
-    char response[1024];
+    char response[RESPONSE_BUFFER_SIZE];
+    int result = 0;
+    
     switch(command) {
         case LIST_USERS:
-            log(DEBUG, "Comando LIST_USERS recibido");
-            snprintf(response, sizeof(response), "%s", getUsers());
+            result = handle_list_users_command(response, sizeof(response));
             break;
             
-        case ADD_USER: {
-            log(DEBUG, "Comando ADD_USER recibido");
-            
-            if (MonitoringClientData->bytes < 4) {
-                log(ERROR, "Invalid ADD_USER message length");
-                snprintf(response, sizeof(response), "Error: Invalid message format\n");
-                break;
-            }
-            
-            char *usernameToAdd = getStringFromSize(buffer + 1);
-            if (!usernameToAdd) {
-                log(ERROR, "Failed to parse username in ADD_USER");
-                snprintf(response, sizeof(response), "Error: Invalid username format\n");
-                break;
-            }
-            
-            int username_len = (unsigned char)buffer[1];
-            char *password = getStringFromSize(buffer + 1 + 1 + username_len);
-            if (!password) {
-                log(ERROR, "Failed to parse password in ADD_USER");
-                free(usernameToAdd);
-                snprintf(response, sizeof(response), "Error: Invalid password format\n");
-                break;
-            }
-            
-            log(INFO, "Adding user: %s", usernameToAdd);
-            add_user(usernameToAdd, password);
-            snprintf(response, sizeof(response), "Usuario %s agregado exitosamente\n%s", usernameToAdd, getUsers());
-            
-            free(usernameToAdd);
-            free(password);
+        case ADD_USER:
+            result = handle_add_user_command(buffer, MonitoringClientData->bytes, response, sizeof(response));
             break;
-        }
-        case REMOVE_USER: {
-            log(DEBUG, "Comando REMOVE_USER recibido");
             
-            if (MonitoringClientData->bytes < 3) {
-                log(ERROR, "Invalid REMOVE_USER message length");
-                snprintf(response, sizeof(response), "Error: Invalid message format\n");
-                break;
-            }
-            
-            char *usernameToRemove = getStringFromSize(buffer + 1);
-            if (!usernameToRemove) {
-                log(ERROR, "Failed to parse username in REMOVE_USER");
-                snprintf(response, sizeof(response), "Error: Invalid username format\n");
-                break;
-            }
-            
-            log(INFO, "Removing user: %s", usernameToRemove);
-            remove_user(usernameToRemove);
-            snprintf(response, sizeof(response), "Usuario %s eliminado exitosamente\n%s", usernameToRemove, getUsers());
-            
-            free(usernameToRemove);
+        case REMOVE_USER:
+            result = handle_remove_user_command(buffer, MonitoringClientData->bytes, response, sizeof(response));
             break;
-        }
-        
+            
+        case CHANGE_PASSWORD:
+            result = handle_change_password_command(buffer, MonitoringClientData->bytes, response, sizeof(response));
+            break;
+            
         default:
-            log(DEBUG, "Comando desconocido recibido: %d", command);
-            snprintf(response, sizeof(response), "Comando %d procesado\n", command);
+            result = handle_unknown_command(command, response, sizeof(response));
             break;
+    }
+    
+    if (result < 0) {
+        log(ERROR, "Command processing failed for command %d", command);
+        return STM_MONITORING_ERROR;
     }
     
     ssize_t sent = send(key->fd, response, strlen(response), 0);

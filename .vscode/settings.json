@@ -12,6 +12,7 @@
         "clientcmdparser.h": "c",
         "inet.h": "c",
         "users.h": "c",
-        "monitoring-server.h": "c"
+        "monitoring-server.h": "c",
+        "monitoringserverutils.h": "c"
     }
 }

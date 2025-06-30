@@ -111,3 +111,14 @@ int remove_user(const char *username) {
     user_count--;
     return 0;
 }
+
+int change_password(const char *username, const char *newPassword) {
+    int idx = find_user(username);
+    if (idx < 0) {
+        fprintf(stderr, "El usuario no existe.\n");
+        return -1;
+    }
+    strncpy(users[idx].password, newPassword, sizeof(users[idx].password) - 1);
+    users[idx].password[sizeof(users[idx].password) - 1] = '\0';
+    return 0;
+}
