@@ -2,12 +2,17 @@
     "files.associations": {
         "logger.h": "c",
         "system_error": "c",
-        "connectiontraffic.h": "c",
-        "dns_resolver.h": "c",
-        "array": "c",
-        "string": "c",
-        "string_view": "c",
-        "errno.h": "c",
-        "pthread.h": "c"
+        "socket.h": "c",
+        "selector.h": "c",
+        "string.h": "c",
+        "compare": "c",
+        "limits": "c",
+        "new": "c",
+        "util.h": "c",
+        "clientcmdparser.h": "c",
+        "inet.h": "c",
+        "users.h": "c",
+        "monitoring-server.h": "c",
+        "monitoringserverutils.h": "c"
     }
 }

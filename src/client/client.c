@@ -1,4 +1,4 @@
-#include <string.h>
+/*#include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -118,7 +118,7 @@ int main(int argc, char *argv[]) {
 	// log(INFO, "Received: ")     // Setup to print the echoed string
 	// while (totalBytesRcvd < echoStringLen && numBytes >=0) {
 	// 	char buffer[BUFSIZE]; 
-	// 	/* Receive up to the buffer size (minus 1 to leave space for a null terminator) bytes from the sender */
+	// 	 Receive up to the buffer size (minus 1 to leave space for a null terminator) bytes from the sender 
 	// 	numBytes = recv(sock, buffer, BUFSIZE - 1, 0);
 	// 	if (numBytes < 0) {
 	// 		log(ERROR, "recv() failed")
@@ -135,3 +135,4 @@ int main(int argc, char *argv[]) {
 	close(clientSocket);
 	return 0;
 }
+*/
