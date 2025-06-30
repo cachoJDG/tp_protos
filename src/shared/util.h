@@ -40,7 +40,9 @@ typedef struct ClientData {
     uint8_t clientBufferData[BUFSIZE];
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
     uint8_t remoteBufferData[BUFSIZE];
-    char username[USERNAME_MAX_LENGTH];
+    char isLoggedIn;
+    //char username[USERNAME_MAX_LENGTH];
+    //char password[USERNAME_MAX_LENGTH];
     // parsing
     AuthMethod authMethod;
     //

@@ -54,3 +54,8 @@ int sendChangePasswordCommand(int clientSocket, char ** commands) {
     
     return send(clientSocket, ans, index, 0);
 }
+
+int sendGetMetricsCommand(int clientSocket) {
+    unsigned char msg = GET_METRICS;
+    return send(clientSocket, &msg, 1, 0);
+}

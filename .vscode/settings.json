@@ -13,6 +13,8 @@
         "inet.h": "c",
         "users.h": "c",
         "monitoring-server.h": "c",
-        "monitoringserverutils.h": "c"
+        "monitoringserverutils.h": "c",
+        "monitoringmetrics.h": "c",
+        "unistd.h": "c"
     }
 }

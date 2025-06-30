@@ -10,5 +10,6 @@ int parseListUsersCommand(char ** commands, size_t commandCount);
 int parseAddUserCommand(char ** commands, size_t commandCount);
 int parseRemoveUserCommand(char ** commands, size_t commandCount);
 int parseChangePasswordCommand(char ** commands, size_t commandCount);
+int parseGetMetricsCommand(char ** commands, size_t commandCount);
 
 #endif

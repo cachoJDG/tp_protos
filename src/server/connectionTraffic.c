@@ -4,7 +4,7 @@
 #include "./../shared/util.h"
 #include <stdio.h>
 #include "../buffer.h"
-
+#include "sockUtils.h"
 
 
 fd_handler PROXY_HANDLER = {
@@ -33,7 +33,7 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&clientData->outgoing_buffer, &readable);
-    ssize_t bytesWritten = send(key->fd, read_ptr, readable, 0);
+    ssize_t bytesWritten = sendBytesWithMetrics(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
         return STM_DONE;
@@ -55,7 +55,7 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     size_t available;
     uint8_t *write_ptr = buffer_write_ptr(&clientData->client_buffer, &available);
 
-    ssize_t bytesRead = recv(key->fd, write_ptr, available, 0);
+    ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         if (bytesRead == 0) {
             log(INFO, "Connection closed by peer on socket %d", key->fd);
@@ -91,7 +91,7 @@ void proxy_handler_read(struct selector_key *key) {
     size_t available;
     uint8_t *write_ptr = buffer_write_ptr(&proxyData->outgoing_buffer, &available);
 
-    ssize_t bytesRead = recv(key->fd, write_ptr, available, 0);
+    ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         log(ERROR, "Error reading from socket %d: %zd", key->fd, bytesRead);
         selector_unregister_fd(key->s, key->fd);
@@ -114,7 +114,7 @@ void proxy_handler_write(struct selector_key *key) {
     ClientData *proxyData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
-    ssize_t bytesWritten = send(key->fd, read_ptr, readable, 0);
+    ssize_t bytesWritten = sendBytesWithMetrics(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
         selector_unregister_fd(key->s, key->fd);
@@ -143,6 +143,6 @@ void proxy_handler_close(struct selector_key *key) {
         return;
     }
     log(INFO, "Closing proxy connection for proxy %d", key->fd);
-    close(key->fd);
+    closeSocketWithMetrics(key->fd);
 }
 

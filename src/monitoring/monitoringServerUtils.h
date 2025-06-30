@@ -60,4 +60,12 @@ int handle_unknown_command(char command, char *response, size_t response_size);
  */
 char *getStringFromSize(char *buffer);
 
+/**
+ * Processes a GET_METRICS command
+ * @param response Buffer to store the response
+ * @param response_size Size of the response buffer
+ * @return 0 on success, -1 on error
+ */
+int handle_get_metrics_command(char *response, size_t response_size);
+
 #endif // MONITORING_COMMANDS_H

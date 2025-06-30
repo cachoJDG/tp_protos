@@ -17,7 +17,8 @@ enum MonitoringCommands {
     LIST_USERS = 1,
     ADD_USER = 2,
     REMOVE_USER = 3,
-    CHANGE_PASSWORD = 4
+    CHANGE_PASSWORD = 4,
+    GET_METRICS = 5
 };
 
 // State machine states for monitoring protocol

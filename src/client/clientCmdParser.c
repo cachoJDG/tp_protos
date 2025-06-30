@@ -27,3 +27,10 @@ int parseChangePasswordCommand(char ** commands, size_t commandCount){
     }
     return (strcmp(commands[0], "CHANGE") == 0 && strcmp(commands[1], "PASSWORD") == 0);
 }
+
+int parseGetMetricsCommand(char ** commands, size_t commandCount){
+    if(commands == NULL || commandCount != 2) {
+        return 0;
+    }
+    return (strcmp(commands[0], "GET") == 0 && strcmp(commands[1], "METRICS") == 0);
+}

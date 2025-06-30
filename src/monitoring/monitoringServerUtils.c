@@ -3,6 +3,7 @@
 #include "../users/users.h"
 #include <stdlib.h>
 #include <string.h>
+#include "monitoringMetrics.h"
 
 char *getStringFromSize(char *buffer) {
     if (!buffer) return NULL;
@@ -124,5 +125,14 @@ int handle_change_password_command(char *buffer, ssize_t bytes, char *response, 
 int handle_unknown_command(char command, char *response, size_t response_size) {
     log(DEBUG, "Comando desconocido recibido: %d", command);
     snprintf(response, response_size, "Comando %d procesado\n", command);
+    return 0;
+}
+
+int handle_get_metrics_command(char *response, size_t response_size) {
+    log(DEBUG, "Comando GET_METRICS recibido");
+    
+    snprintf(response, response_size, "Conexiones totales: %zu\nConexiones concurrentes: %zu\nBytes enviados: %zu\nBytes recibidos: %zu\n", 
+        getMetrics()->total_connections, getMetrics()->current_connections, getMetrics()->bytes_sent, getMetrics()->bytes_received);
+    
     return 0;
 }

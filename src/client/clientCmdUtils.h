@@ -12,5 +12,6 @@ int sendListUsersCommand(int clientSocket);
 int sendAddUserCommand(int clientSocket, char ** commands);
 int sendRemoveUserCommand(int clientSocket, char ** commands);
 int sendChangePasswordCommand(int clientSocket, char ** commands);
+int sendGetMetricsCommand(int clientSocket);
 
 #endif

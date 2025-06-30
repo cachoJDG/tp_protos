@@ -57,10 +57,7 @@ int find_user(const char *username) {
 
 int validate_login(const char *username, const char *password) {
     int idx = find_user(username);
-    if (idx >= 0 && strcmp(users[idx].password, password) == 0) {
-        return 1;
-    }
-    return 0;
+    return (idx >= 0 && strcmp(users[idx].password, password) == 0);
 }
 
 int add_user(const char *username, const char *password) {

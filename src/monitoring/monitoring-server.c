@@ -198,6 +198,10 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
         case CHANGE_PASSWORD:
             result = handle_change_password_command(buffer, MonitoringClientData->bytes, response, sizeof(response));
             break;
+
+        case GET_METRICS:
+            result = handle_get_metrics_command(response, sizeof(response));
+            break;
             
         default:
             result = handle_unknown_command(command, response, sizeof(response));

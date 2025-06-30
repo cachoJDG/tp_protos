@@ -71,6 +71,9 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 	else if(parseChangePasswordCommand(commands, commandCount)) {
 		sendChangePasswordCommand(clientSocket ,commands);
 	}
+	else if(parseGetMetricsCommand(commands, commandCount)) {
+		sendGetMetricsCommand(clientSocket);
+	}
 	else {
 		fprintf(stderr, "Unknown command\n");
 	}

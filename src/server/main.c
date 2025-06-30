@@ -15,6 +15,7 @@
 #include "socks5.h"
 #include "../users/users.h"
 #include "../monitoring/monitoring-server.h"
+#include "../monitoring/monitoringMetrics.h"
 
 #define MAXPENDING 32 // Maximum outstanding connection requests
 #define SELECTOR_CAPACITY 1024
@@ -103,6 +104,8 @@ int main(int argc, char *argv[]) {
 
     load_users();
     log(INFO, "Users loaded successfully");
+    metrics_init();
+    log(INFO, "Metrics initialized successfully");
 
     int servSock = setupTCPServerSocket(argv[1]);
     if (servSock < 0) return 1;

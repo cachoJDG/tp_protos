@@ -1,6 +1,8 @@
 #include "socks5.h"
 #include "sockRequest.h"
 #include "connectionTraffic.h"
+#include "sockUtils.h"
+#include "../users/users.h"
 
 fd_handler CLIENT_HANDLER = {
     .handle_read = client_handler_read,
@@ -110,7 +112,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 
     size_t bufferLimit = 0;
     uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
-    ssize_t bytesRead = recv(key->fd, clientBuffer, bufferLimit, 0);
+    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, bufferLimit, 0);
     if(bytesRead <= 0) {
         return STM_ERROR;
     }
@@ -145,11 +147,11 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     switch (clientData->authMethod)
     {
     case AUTH_NONE:
-        send(key->fd, "\x05\x00", 2, 0);
+        sendBytesWithMetrics(key->fd, "\x05\x00", 2, 0);
         selector_set_interest_key(key, OP_READ); 
         return STM_REQUEST_READ;
     case AUTH_USER_PASSWORD:
-        send(key->fd, "\x05\x02", 2, 0);
+        sendBytesWithMetrics(key->fd, "\x05\x02", 2, 0);
         selector_set_interest_key(key, OP_READ); 
         return STM_LOGIN_READ;
     case AUTH_GSSAPI:
@@ -164,10 +166,11 @@ void stm_login_read_arrival(unsigned state, struct selector_key *key) {
 
 StateSocksv5 stm_login_read(struct selector_key *key) {
     ClientData *clientData = key->data;
+    char username[USERNAME_MAX_LENGTH] = {0};
     char password[USERNAME_MAX_LENGTH] = {0};
     size_t bufferLimit = 0;
     uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
-    ssize_t bytesRead = recv(key->fd, clientBuffer, bufferLimit, 0);
+    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, bufferLimit, 0);
 
     buffer_write_adv(&clientData->client_buffer, bytesRead);
     uint8_t loginVersion = buffer_read(&clientData->client_buffer);
@@ -176,12 +179,19 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
         return STM_ERROR;
     }
     uint8_t usernameLen = buffer_read(&clientData->client_buffer);
-    buffer_read_bytes(&clientData->client_buffer, clientData->username, usernameLen);
-    clientData->username[usernameLen] = '\0';
+    buffer_read_bytes(&clientData->client_buffer, username, usernameLen);
+    username[usernameLen] = '\0';
 
     uint8_t passwordLen = buffer_read(&clientData->client_buffer);
     buffer_read_bytes(&clientData->client_buffer, password, passwordLen);
-    log(DEBUG, "username[%d]='%s' password[%d]='%s'", usernameLen, clientData->username, passwordLen, password);
+    log(DEBUG, "username[%d]='%s' password[%d]='%s'", usernameLen, username, passwordLen, password);
+    if(validate_login(username, password)) {
+        log(INFO, "Login successful for user '%s'", username);
+        clientData->isLoggedIn = 1;
+    } else {
+        log(ERROR, "Login failed for user '%s'", username);
+        clientData->isLoggedIn = 0;
+    }
 
     selector_set_interest_key(key, OP_WRITE); 
     return STM_LOGIN_WRITE;
@@ -190,8 +200,14 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     
-    ssize_t bytes = send(key->fd, "\x05\x00", 2, 0);
-    // ssize_t bytes = send(key->fd, "\x05\x01", 2, 0); // si esta mal el usuario
+    if(clientData->isLoggedIn == 1) {
+        sendBytesWithMetrics(key->fd, "\x05\x00", 2, 0);
+        selector_set_interest_key(key, OP_READ); 
+        return STM_REQUEST_READ;
+    } else {
+        sendBytesWithMetrics(key->fd, "\x05\x01", 2, 0);
+        return STM_ERROR;
+    }
 
     selector_set_interest_key(key, OP_READ); 
     return STM_REQUEST_READ;
@@ -238,8 +254,9 @@ void client_handler_close(struct selector_key *key) {
     // enum StateSocksv5 state = stm_handler_close(&clientData->stm, key); // este no retorna xd
     // TODO: avoid double free
     // selector_set_interest_key(key, OP_NOOP);
+
     free(key->data);
     key->data = NULL; // Evitar que se intente liberar de nuevo
     log(INFO, "handling client close");
-    close(key->fd); // Cerrar el socket del cliente
+    closeSocketWithMetrics(key->fd); // Cerrar el socket del cliente
 }
