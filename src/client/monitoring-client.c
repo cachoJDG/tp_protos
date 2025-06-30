@@ -54,11 +54,6 @@ int tcpClientSocket(const char *host, const char *service) {
 
 void sendCommand(int clientSocket, char ** commands, int commandCount) {
 
-	printf("Debug: commandCount = %d\n", commandCount);
-    for (int i = 0; i < commandCount; i++) {
-        printf("Debug: commands[%d] = %s\n", i, commands[i] ? commands[i] : "NULL");
-    }
-
 	if(parseListUsersCommand(commands, commandCount)) {
 		sendListUsersCommand(clientSocket);
 	}
