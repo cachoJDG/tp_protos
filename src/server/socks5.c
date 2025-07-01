@@ -254,7 +254,10 @@ void client_handler_close(struct selector_key *key) {
     // enum StateSocksv5 state = stm_handler_close(&clientData->stm, key); // este no retorna xd
     // TODO: avoid double free
     // selector_set_interest_key(key, OP_NOOP);
-
+    ClientData *clientData = key->data;
+    if(clientData->client_fd != -1) {
+        close(clientData->client_fd);
+    }
     free(key->data);
     key->data = NULL; // Evitar que se intente liberar de nuevo
     log(INFO, "handling client close");

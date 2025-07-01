@@ -15,9 +15,7 @@
 #include <netdb.h>
 #include <string.h>
 #include "../selector.h"
-#include "../parser.h"
 #include <signal.h>
-#include "map.h"
 #include "../stm.h"
 #include <pthread.h>
 #include "dns_resolver.h"

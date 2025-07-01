@@ -7,9 +7,7 @@
 #include "../shared/logger.h"
 #include "../shared/util.h"
 #include "../selector.h"
-#include "../parser.h"
 #include <signal.h>
-#include "map.h"
 #include "../stm.h"
 #include <pthread.h>
 #include "socks5.h"
@@ -19,8 +17,6 @@
 
 #define MAXPENDING 32 // Maximum outstanding connection requests
 #define SELECTOR_CAPACITY 1024
-
-map hashmap = NULL; // Global hashmap to store user credentials
 
 /*
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
@@ -88,14 +84,6 @@ int main(int argc, char *argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     close(STDIN_FILENO);
-
-    hashmap = map_create();
-    map_set(hashmap, "john", "doe");
-    map_set(hashmap, "alex", "1234");
-    if(map_contains(hashmap, "john") == true) {
-        log(INFO, "User john is in the map");
-    }
-    log(INFO, "Map created with %d elements", map_size(hashmap));
 
     if (argc != 3) {
         log(FATAL, "usage: %s <SOCKS5 Port> <Monitoring Port>", argv[0]);
