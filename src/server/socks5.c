@@ -68,8 +68,6 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
     {
         .state = STM_DNS_DONE, 
         // TODO: OJO que este estado genera bugs cuando se hace read o write. Los error_redirect ayudan a "prevenir" esto, pero no sé si está bien
-        .on_read_ready = error_redirect, 
-        .on_write_ready = error_redirect,
         .on_block_ready = stm_dns_done,
     },
     {
@@ -229,7 +227,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
 void stm_error(unsigned state, struct selector_key *key) {
     log(ERROR, "stm_error called for socket %d", key->fd);
     ClientData *clientData = key->data; 
-    log(ERROR, ".");
+    selector_unregister_fd(key->s, key->fd);
     selector_set_interest_key(key, OP_NOOP);
 }
 
@@ -267,6 +265,7 @@ void client_handler_block(struct selector_key *key) {
     }
 }
 void client_handler_close(struct selector_key *key) {
+    log(DEBUG, "client_handler_close called for socket %d", key->fd);
 
     // enum StateSocksv5 state = stm_handler_close(&clientData->stm, key); // este no retorna xd
     // TODO: avoid double free

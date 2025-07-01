@@ -129,6 +129,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
                 return STM_ERROR;
             }
             pthread_detach(tid);
+            selector_set_interest_key(key, OP_NOOP); // No queremos leer ni escribir hasta que el DNS esté resuelto
             log(DEBUG, "DNS request for %s:%s initiated", job->host, job->service);
             log(DEBUG, "stm_request_read ended for socket %d", key->fd);
             return STM_DNS_DONE;
@@ -273,35 +274,47 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     // Send a server reply: SUCCESS, then send the address to which our socket is bound.
     if (send(key->fd, "\x05\x00\x00", 3, 0) < 0)
         return STM_ERROR;
-
+    log(DEBUG, "Sent SOCKS5 reply: 0x05 0x00 0x00");
+    // TODO: Actualmente, esto puede fallar. Yo asumo que se arregla solo cuando tengamos el parser, porque acá se hace send sin saber
     switch (boundAddress.ss_family) {
         case AF_INET:
             // Send: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
+            log(DEBUG, "1");
+            // TODO: Acá puede abortar el programa de la nada sin avisos
             if (send(key->fd, "\x01", 1, 0) < 0)
                 return STM_ERROR;
+            log(DEBUG, "2");
             if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) < 0)
                 return STM_ERROR;
+            log(DEBUG, "3");
             if (send(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) < 0)
                 return STM_ERROR;
             break;
 
         case AF_INET6:
             // Send: '\x04' (ATYP identifier for IPv6) followed by the IP and PORT.
+            log(DEBUG, "4");
             if (send(key->fd, "\x04", 1, 0) < 0)
                 return STM_ERROR;
+            log(DEBUG, "5");
             if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) < 0)
                 return STM_ERROR;
+            log(DEBUG, "6");
             if (send(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) < 0)
                 return STM_ERROR;
             break;
 
         default:
+            log(DEBUG, "7");
             // We don't know the address type? Send IPv4 0.0.0.0:0.
             if (send(key->fd, "\x01\x00\x00\x00\x00\x00\x00", 7, 0) < 0)
                 return STM_ERROR;
             break;
     }
+    log(DEBUG, "No errors");
+
     clientData->outgoing_fd = sock;
+    log(DEBUG, "Successfully connected to remote socket %d", sock);
     freeaddrinfo(clientData->connectAddresses);
 
     selector_set_interest_key(key, OP_READ);
