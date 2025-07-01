@@ -109,3 +109,16 @@ static const struct parser_definition login_parser_def = {
 // Inicialización del parser
 const unsigned *classes = parser_no_classes();
 struct parser *login_parser = parser_init(classes, &login_parser_def);
+
+
+
+
+1. Todos los datos al buffer
+2. Parseo lo que halla
+3. Problema: Si se quedaron datos en el buffer y no se vuelve a leer, hay espera infinita
+4. 
+
+1. Leo lo que sé que tengo que leer para un subestado
+2. Lo dejo en el buffer
+2. Parseo ese subestado
+3. Si terminó el estado, redirijo a otro
