@@ -3,6 +3,7 @@
 #include "connectionTraffic.h"
 #include "sockUtils.h"
 #include "../users/users.h"
+#include "initialParser.h"
 
 fd_handler CLIENT_HANDLER = {
     .handle_read = client_handler_read,
@@ -105,8 +106,7 @@ void handle_read_passive(struct selector_key *key) {
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    clientData->initialParserInfo.substate = 0;
-    clientData->initialParserInfo.toRead = 2;
+    ini_initialize(&clientData->initialParserInfo);
 }
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
@@ -118,38 +118,23 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     size_t bufferLimit = 0;
     uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
 
-    ssize_t toRead = parserInfo->toRead;
-    toRead = (bufferLimit > toRead) ? toRead : bufferLimit;
-    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, toRead, 0);
-    buffer_write_adv(&clientData->client_buffer, bytesRead); // lo leído va al buffer directo
+    ssize_t maxToRead = (bufferLimit > parserInfo->toRead) ? parserInfo->toRead : bufferLimit;
+    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, maxToRead, 0);
     if(bytesRead <= 0) {
+        log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
         return STM_ERROR;
     }
+    log(DEBUG, "bytesRead=%zd, bufferLimit=%zu, toRead=%zd", bytesRead, bufferLimit, parserInfo->toRead);
+    buffer_write_adv(&clientData->client_buffer, bytesRead); // lo leído va al buffer directo
 
-    // 2. Itero hasta que tenga suficientes bytes para procesar
-    parserInfo->toRead -= bytesRead;
-    if(parserInfo->toRead > 0) {
-        return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
-    }
-    if (parserInfo->toRead < 0) {
-        log(FATAL, "Received more bytes than expected in initial read. FIX NEEDED");
-        return STM_ERROR;
-    }
-
-    // 3. Parsing
-    switch (parserInfo->substate) {
-        case 0: // version + method count
-            parserInfo->socksVersion = buffer_read(&clientData->client_buffer);
-            parserInfo->methodCount = buffer_read(&clientData->client_buffer);
-            parserInfo->substate = 1;
-            parserInfo->toRead = parserInfo->methodCount;
-            return STM_INITIAL_READ;
-        case 1: // methods
-            buffer_read_bytes(&clientData->client_buffer, 
-                (uint8_t *)parserInfo->authMethods, parserInfo->methodCount);
+    // Pasos 2 y 3 hechos con el parser del estado inicial (ini_parse)
+    switch(ini_parse(&clientData->client_buffer, parserInfo, bytesRead)) {
+        case PARSER_OK:
             break; // Termino el parsing
-        default:
-            log(FATAL, "Invalid substate %d in initial read", parserInfo->substate);
+        case PARSER_INCOMPLETE:
+            return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
+        case PARSER_ERROR:
+            log(FATAL, "Error parsing initial data");
             return STM_ERROR;
     }
 
