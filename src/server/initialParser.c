@@ -1,5 +1,6 @@
 #include "../shared/util.h"
 #include "initialParser.h"
+#include "../shared/logger.h"
 
 // -------- internal --------
 
@@ -56,13 +57,18 @@ parser_ret login_version_userlength(struct buffer *buffer, socks5_login_parserin
 
 parser_ret login_user_passlength(struct buffer *buffer, socks5_login_parserinfo* parserInfo, ssize_t *toRead) {
     buffer_read_bytes(buffer, (uint8_t *)parserInfo->username, parserInfo->usernameLength);
-    *toRead = parserInfo->passwordLength; // Next we need to read password length
+    parserInfo->passwordLength = buffer_read(buffer);
+
+    *toRead = parserInfo->passwordLength;
+    if(parserInfo->passwordLength == 0) {
+        log(DEBUG, "No password provided, skipping password parsing");
+        return PARSER_OK;
+    }
     parserInfo->substate = 2; // Move to next substate
     return PARSER_INCOMPLETE;
 }
 
 parser_ret login_pass(struct buffer *buffer, socks5_login_parserinfo* parserInfo, ssize_t *toRead) {
-    parserInfo->passwordLength = buffer_read(buffer);
     buffer_read_bytes(buffer, (uint8_t *)parserInfo->password, parserInfo->passwordLength);
     return PARSER_OK; // Finished parsing login data
 }
@@ -88,6 +94,7 @@ parser_ret login_parse(struct buffer *buffer, socks5_login_parserinfo* parserInf
         log(FATAL, "Received more bytes than expected in login read. FIX NEEDED");
         return PARSER_ERROR; // More bytes read than expected
     }
+    log(DEBUG, "login_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);
 
     // Call the appropriate substate parser
     return loginParserSubstates[parserInfo->substate](buffer, parserInfo, toRead);
