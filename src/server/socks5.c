@@ -107,14 +107,14 @@ void handle_read_passive(struct selector_key *key) {
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    ini_initialize(&clientData->initialParserInfo);
+    ini_initialize(&clientData->initialParserInfo, &clientData->toRead);
     buffer_reset(&clientData->client_buffer);
 }
 
 // TODO: mover a utils.c
 // Esto asegura de que SOLAMENTE se haga recv de lo que se pueda recibir
 // y que no se intente leer más de lo que el buffer puede contener.
-ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, size_t toRead) {
+ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toRead) {
     size_t bufferLimit = 0;
     uint8_t *writePtr = buffer_write_ptr(buffer, &bufferLimit);
 
@@ -127,7 +127,7 @@ ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, size_t toRead) {
     return bytesRead;
 }
 
-ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, size_t toWrite) {
+ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toWrite) {
     size_t bufferLimit = 0;
     uint8_t *writePtr = buffer_read_ptr(buffer, &bufferLimit);
 
@@ -148,7 +148,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 
     // Obs: si toRead fuese más fácil de acceder, todo el paso 1 se podría ser directamente en client_handler_read.
     // 1. Guardo datos en el buffer (sin que se lean bytes de más)
-    ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, parserInfo->toRead);
+    ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
         log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
@@ -156,13 +156,14 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     }
 
     // 2. Parsing (de lo que hay en el buffer)
-    switch(ini_parse(&clientData->client_buffer, parserInfo, bytesRead)) {
+    clientData->toRead -= bytesRead;
+    switch(ini_parse(&clientData->client_buffer, parserInfo, &clientData->toRead)) {
         case PARSER_OK:
             break; // Termino el parsing
         case PARSER_INCOMPLETE:
             return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
-            log(FATAL, "Error parsing initial data");
+            log(ERROR, "Error parsing initial data");
             return STM_ERROR;
     }
 
@@ -204,7 +205,6 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     clientData->toWrite = 2;
 
     selector_set_interest_key(key, OP_WRITE); 
-
     return STM_INITIAL_WRITE;
 }
 
@@ -235,62 +235,109 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
             return STM_REQUEST_READ;
         default:
     }
+    selector_set_interest_key(key, OP_NOOP);
     log(INFO, "Unsupported authentication method %d", clientData->authMethod);
     return STM_ERROR;
-
 }
 
 void stm_login_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
+    log(DEBUG, "stm_login_read_arrival");
+    login_initialize(&clientData->loginParserInfo, &clientData->toRead);
+    buffer_reset(&clientData->client_buffer);
 }
 
 StateSocksv5 stm_login_read(struct selector_key *key) {
+    log(DEBUG, "stm_login_read");
     ClientData *clientData = key->data;
-    char username[USERNAME_MAX_LENGTH] = {0};
-    char password[USERNAME_MAX_LENGTH] = {0};
-    size_t bufferLimit = 0;
-    uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
-    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, bufferLimit, 0);
+    socks5_login_parserinfo* parserInfo = &clientData->loginParserInfo;
 
-    buffer_write_adv(&clientData->client_buffer, bytesRead);
-    uint8_t loginVersion = buffer_read(&clientData->client_buffer);
-    if(loginVersion != SOCKS_LOGIN_VERSION) {
-        log(ERROR, "invalid login version %d", loginVersion);
+    // 1. Guardo datos en el buffer (sin que se lean bytes de más)
+    ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
+
+    if(bytesRead <= 0) {
+        log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
         return STM_ERROR;
     }
-    uint8_t usernameLen = buffer_read(&clientData->client_buffer);
-    buffer_read_bytes(&clientData->client_buffer, username, usernameLen);
-    username[usernameLen] = '\0';
 
-    uint8_t passwordLen = buffer_read(&clientData->client_buffer);
-    buffer_read_bytes(&clientData->client_buffer, password, passwordLen);
-    log(DEBUG, "username[%d]='%s' password[%d]='%s'", usernameLen, username, passwordLen, password);
+    // 2. Parsing (de lo que hay en el buffer)
+    clientData->toRead -= bytesRead;
+    switch(login_parse(&clientData->client_buffer, parserInfo, &clientData->toRead)) {
+        case PARSER_OK:
+            break; // Termino el parsing
+        case PARSER_INCOMPLETE:
+            return STM_LOGIN_READ; // No se recibieron todos los bytes necesarios
+        case PARSER_ERROR:
+            log(ERROR, "Error parsing login data");
+            return STM_ERROR;
+    }
+
+    // 3. Acciones
+    char username[USERNAME_MAX_LENGTH] = {0};
+    memcpy(username, parserInfo->username, parserInfo->usernameLength);
+    username[parserInfo->usernameLength] = '\0';
+    char password[USERNAME_MAX_LENGTH] = {0};
+    memcpy(password, parserInfo->password, parserInfo->passwordLength);
+    password[parserInfo->passwordLength] = '\0';
+    uint8_t loginVersion = parserInfo->loginVersion;
+
+    if(loginVersion != SOCKS_LOGIN_VERSION) {
+        log(ERROR, "Invalid login version %d", loginVersion);
+        return STM_ERROR;
+    }
+    log(DEBUG, "username[%d]='%s' password[%d]='%s'", parserInfo->usernameLength, username, parserInfo->passwordLength, password);
     if(validate_login(username, password)) {
         log(INFO, "Login successful for user '%s'", username);
         clientData->isLoggedIn = 1;
     } else {
-        log(ERROR, "Login failed for user '%s'", username);
+        log(INFO, "Login failed for user '%s'", username);
         clientData->isLoggedIn = 0;
     }
 
-    selector_set_interest_key(key, OP_WRITE); 
+    // 4. Preparo buffers para la respuesta
+    buffer_reset(&clientData->outgoing_buffer);
+    ssize_t bufferLimit = 0;
+    uint8_t *response = buffer_write_ptr(&clientData->outgoing_buffer, &bufferLimit);
+    response[0] = 0x05;
+    if(clientData->isLoggedIn) {
+        response[1] = 0x00;
+    } else {
+        response[1] = 0x01;
+    }
+    buffer_write_adv(&clientData->outgoing_buffer, 2);
+    clientData->toWrite = 2;
+    selector_set_interest_key(key, OP_WRITE);
     return STM_LOGIN_WRITE;
 }
 
 StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-    
-    if(clientData->isLoggedIn == 1) {
-        sendBytesWithMetrics(key->fd, "\x05\x00", 2, 0);
-        selector_set_interest_key(key, OP_READ); 
-        return STM_REQUEST_READ;
-    } else {
-        sendBytesWithMetrics(key->fd, "\x05\x01", 2, 0);
+    log(DEBUG, "stm_login_write");
+
+    // 1. Leo del buffer
+    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
+
+    if(bytesWritten <= 0) {
+        // TODO: En este tipo de situaciones post-send/recv es importante entender bien cómo funciona errno en el sistema de sockets no bloqueantes
+        log(ERROR, "Error writing login response to client");
         return STM_ERROR;
     }
 
-    selector_set_interest_key(key, OP_READ); 
-    return STM_REQUEST_READ;
+    // 2. Repito hasta vaciar el buffer
+    clientData->toWrite -= bytesWritten;
+    if(clientData->toWrite > 0) {
+        return STM_LOGIN_WRITE;
+    }
+
+    // 3. Cambio de estado
+    if(clientData->isLoggedIn) {
+        selector_set_interest_key(key, OP_READ);
+        log(INFO, "User logged in successfully");
+        return STM_REQUEST_READ;
+    }
+    selector_set_interest_key(key, OP_NOOP);
+    log(INFO, "Unsupported authentication method %d", clientData->authMethod);
+    return STM_ERROR;
 }
 
 void stm_error(unsigned state, struct selector_key *key) {

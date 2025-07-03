@@ -31,12 +31,24 @@ typedef enum AuthMethod {
 } AuthMethod;
 
 typedef struct socks5_initial_parserinfo {
-    uint8_t socksVersion; // Version del protocolo SOCKS
-    uint8_t methodCount;  // Cantidad de metodos de autenticacion soportados
-    AuthMethod authMethods[BUFSIZE]; // Metodos de autenticacion seleccionados
+    // -------- Datos parseados --------
+    uint8_t socksVersion; 
+    uint8_t methodCount; 
+    AuthMethod authMethods[BUFSIZE];
+    // -------- Datos internos del parser --------
     uint8_t substate;
-    ssize_t toRead;
 } socks5_initial_parserinfo;
+
+typedef struct socks5_login_parserinfo {
+    // -------- Datos parseados --------
+    uint8_t loginVersion;
+    uint8_t usernameLength;
+    char username[USERNAME_MAX_LENGTH];
+    uint8_t passwordLength;
+    char password[USERNAME_MAX_LENGTH];
+    // -------- Datos internos del parser --------
+    uint8_t substate;
+} socks5_login_parserinfo;
 
 typedef struct ClientData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
@@ -54,8 +66,10 @@ typedef struct ClientData {
     // parsing
     AuthMethod authMethod;
     socks5_initial_parserinfo initialParserInfo;
+    socks5_login_parserinfo loginParserInfo;
 
     ssize_t toWrite;
+    ssize_t toRead;
 } ClientData;
 
 typedef enum StateSocksv5 {
