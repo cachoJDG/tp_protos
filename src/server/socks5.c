@@ -3,6 +3,7 @@
 #include "connectionTraffic.h"
 #include "sockUtils.h"
 #include "../users/users.h"
+#include "initialParser.h"
 
 fd_handler CLIENT_HANDLER = {
     .handle_read = client_handler_read,
@@ -99,31 +100,79 @@ void handle_read_passive(struct selector_key *key) {
     clientData->outgoing_fd = -1;
     stm_init(&clientData->stm);
     buffer_init(&clientData->client_buffer, BUFSIZE, clientData->clientBufferData);
+    buffer_init(&clientData->outgoing_buffer, BUFSIZE, clientData->remoteBufferData);
 
     selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData);
 }
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
+    ini_initialize(&clientData->initialParserInfo);
+    buffer_reset(&clientData->client_buffer);
 }
 
-StateSocksv5 stm_initial_read(struct selector_key *key) {
-    ClientData *clientData = key->data;
-
+// TODO: mover a utils.c
+// Esto asegura de que SOLAMENTE se haga recv de lo que se pueda recibir
+// y que no se intente leer más de lo que el buffer puede contener.
+ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, size_t toRead) {
     size_t bufferLimit = 0;
-    uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
-    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, bufferLimit, 0);
+    uint8_t *writePtr = buffer_write_ptr(buffer, &bufferLimit);
+
+    ssize_t maxToRead = (bufferLimit > toRead) ? toRead : bufferLimit;
+    ssize_t bytesRead = recvBytesWithMetrics(fd, writePtr, maxToRead, 0);
+    if (bytesRead > 0) {
+        buffer_write_adv(buffer, bytesRead);
+    }
+    log(DEBUG, "bytesRead=%zd, toRead=%zd", bytesRead, toRead);
+    return bytesRead;
+}
+
+ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, size_t toWrite) {
+    size_t bufferLimit = 0;
+    uint8_t *writePtr = buffer_read_ptr(buffer, &bufferLimit);
+
+    ssize_t maxToWrite = (bufferLimit > toWrite) ? toWrite : bufferLimit;
+    ssize_t bytesWritten = sendBytesWithMetrics(fd, writePtr, maxToWrite, 0);
+    if (bytesWritten > 0) {
+        buffer_read_adv(buffer, bytesWritten);
+    }
+    log(DEBUG, "bytesWritten=%zd, toWrite=%zd", bytesWritten, toWrite);
+    return bytesWritten;
+}
+
+
+StateSocksv5 stm_initial_read(struct selector_key *key) {
+    log(DEBUG, "stm_initial_read");
+    ClientData *clientData = key->data;
+    socks5_initial_parserinfo* parserInfo = &clientData->initialParserInfo;
+
+    // Obs: si toRead fuese más fácil de acceder, todo el paso 1 se podría ser directamente en client_handler_read.
+    // 1. Guardo datos en el buffer (sin que se lean bytes de más)
+    ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, parserInfo->toRead);
+
     if(bytesRead <= 0) {
+        log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
         return STM_ERROR;
     }
 
-    buffer_write_adv(&clientData->client_buffer, bytesRead);
-    uint8_t socksVersion = buffer_read(&clientData->client_buffer);
-    uint8_t methodCount = buffer_read(&clientData->client_buffer);
+    // 2. Parsing (de lo que hay en el buffer)
+    switch(ini_parse(&clientData->client_buffer, parserInfo, bytesRead)) {
+        case PARSER_OK:
+            break; // Termino el parsing
+        case PARSER_INCOMPLETE:
+            return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
+        case PARSER_ERROR:
+            log(FATAL, "Error parsing initial data");
+            return STM_ERROR;
+    }
+
+    // 3. Acciones
+    uint8_t socksVersion = parserInfo->socksVersion;
+    uint8_t methodCount = parserInfo->methodCount;
 
     clientData->authMethod = AUTH_NO_ACCEPTABLE;
     for(int i = 0; i < methodCount; i++) {
-        AuthMethod authMethod = buffer_read(&clientData->client_buffer);
+        AuthMethod authMethod = parserInfo->authMethods[i];
         if(authMethod == AUTH_USER_PASSWORD) {
             clientData->authMethod = AUTH_USER_PASSWORD;
             break;
@@ -136,6 +185,24 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
                   : ((clientData->authMethod == AUTH_NONE) ? "none" : "invalid");
     log(DEBUG, "version=%d method='%s'", socksVersion, authStr);
 
+    // 4. Preparo buffers para la respuesta
+    buffer_reset(&clientData->outgoing_buffer);
+    buffer_write(&clientData->outgoing_buffer, 0x05); // SOCKS version 5
+    switch (clientData->authMethod) {
+        case AUTH_NONE:
+            buffer_write(&clientData->outgoing_buffer, 0x00); // No authentication required
+            break;
+        case AUTH_USER_PASSWORD:
+            buffer_write(&clientData->outgoing_buffer, 0x02); // User/password authentication
+            break;
+        case AUTH_GSSAPI:
+        default:
+            log(INFO, "Unsupported authentication method %d", clientData->authMethod);
+            buffer_write(&clientData->outgoing_buffer, 0xFF); // No acceptable authentication method
+            break;
+    }
+    clientData->toWrite = 2;
+
     selector_set_interest_key(key, OP_WRITE); 
 
     return STM_INITIAL_WRITE;
@@ -143,21 +210,34 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 
 StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-    
-    switch (clientData->authMethod)
-    {
-    case AUTH_NONE:
-        sendBytesWithMetrics(key->fd, "\x05\x00", 2, 0);
-        selector_set_interest_key(key, OP_READ); 
-        return STM_REQUEST_READ;
-    case AUTH_USER_PASSWORD:
-        sendBytesWithMetrics(key->fd, "\x05\x02", 2, 0);
-        selector_set_interest_key(key, OP_READ); 
-        return STM_LOGIN_READ;
-    case AUTH_GSSAPI:
-    default:
+    log(DEBUG, "stm_initial_write");
+
+    // 1. Leo del buffer
+    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
+
+    if(bytesWritten <= 0) {
+        log(ERROR, "Error writing initial response to client");
         return STM_ERROR;
     }
+
+    // 2. Repito hasta vaciar el buffer
+    clientData->toWrite -= bytesWritten;
+    if(clientData->toWrite > 0) {
+        return STM_INITIAL_WRITE;
+    }
+    selector_set_interest_key(key, OP_READ);
+
+    // 3. Cambio de estado
+    switch(clientData->authMethod) {
+        case AUTH_USER_PASSWORD:
+            return STM_LOGIN_READ;
+        case AUTH_NONE:
+            return STM_REQUEST_READ;
+        default:
+    }
+    log(INFO, "Unsupported authentication method %d", clientData->authMethod);
+    return STM_ERROR;
+
 }
 
 void stm_login_read_arrival(unsigned state, struct selector_key *key) {

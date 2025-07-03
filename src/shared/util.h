@@ -30,6 +30,14 @@ typedef enum AuthMethod {
     AUTH_NO_ACCEPTABLE = 0xFF
 } AuthMethod;
 
+typedef struct socks5_initial_parserinfo {
+    uint8_t socksVersion; // Version del protocolo SOCKS
+    uint8_t methodCount;  // Cantidad de metodos de autenticacion soportados
+    AuthMethod authMethods[BUFSIZE]; // Metodos de autenticacion seleccionados
+    uint8_t substate;
+    ssize_t toRead;
+} socks5_initial_parserinfo;
+
 typedef struct ClientData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
     int           outgoing_fd; 
@@ -45,7 +53,9 @@ typedef struct ClientData {
     //char password[USERNAME_MAX_LENGTH];
     // parsing
     AuthMethod authMethod;
-    //
+    socks5_initial_parserinfo initialParserInfo;
+
+    ssize_t toWrite;
 } ClientData;
 
 typedef enum StateSocksv5 {
@@ -61,6 +71,7 @@ typedef enum StateSocksv5 {
     STM_DONE,
     STM_ERROR, // ERROR DEBE SER EL ULTIMO
 } StateSocksv5;
+
 
 
 #define ERROR_VALUE (-1)
