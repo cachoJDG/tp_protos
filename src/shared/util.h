@@ -54,7 +54,8 @@ typedef struct ClientData {
     // parsing
     AuthMethod authMethod;
     socks5_initial_parserinfo initialParserInfo;
-    //
+
+    ssize_t toWrite;
 } ClientData;
 
 typedef enum StateSocksv5 {
