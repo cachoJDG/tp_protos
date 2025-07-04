@@ -2,6 +2,8 @@
 #include "../shared/util.h"
 #include "../monitoring/monitoringMetrics.h"
 #include "sockUtils.h"
+#include "socks5.h"
+#include "initialParser.h"
 
 typedef enum CommandSocksv5 {
     CMD_CONNECT = 0x01,
@@ -54,34 +56,55 @@ void *dns_thread_func(void *arg) {
 
 void stm_request_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
+    log(DEBUG, "stm_request_read_arrival for socket %d", clientData->client_fd);
+    request_initialize(&clientData->requestParser, &clientData->toRead);
+    buffer_reset(&clientData->client_buffer);
 }
 
 StateSocksv5 stm_request_read(struct selector_key *key) {
+    log(DEBUG, "stm_request_read for socket %d", key->fd);
     ClientData *clientData = key->data;
+    socks5_request_parserinfo *parserInfo = &clientData->requestParser;
 
-    size_t bufferLimit = 0;
-    uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
-    ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, bufferLimit, 0);
-    buffer_write_adv(&clientData->client_buffer, bytesRead);
-    // TODO: Ojo que está ignorando la versión (debería rechazar si la versión es incorrecta)
-    // Para rechazar deberíamos mandar un mensaje que diga "05 Connection Refused"
-    uint8_t sockVersion = buffer_read(&clientData->client_buffer);
-    CommandSocksv5 cmd = buffer_read(&clientData->client_buffer);
+    // 1. Guardo datos en el buffer (sin que se lean bytes de más)
+    ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
+
+    if (bytesRead <= 0) {
+        log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
+        return STM_ERROR;
+    }
+
+    // 2. Parsing (de lo que hay en el buffer)
+    clientData->toRead -= bytesRead;
+    switch(request_parse(&clientData->client_buffer, parserInfo, &clientData->toRead)) {
+        case PARSER_OK:
+
+            break; // Termino el parsing
+        case PARSER_INCOMPLETE:
+            return STM_REQUEST_READ; // No se recibieron todos los bytes necesarios
+        case PARSER_ERROR:
+            log(ERROR, "Error parsing request data");
+            return STM_ERROR;
+    }
+
+    // 3. Acciones
+    log(DEBUG, "Parsed request: command=%d, addressType=%d, port=%d, domainNameLength=%d",
+        parserInfo->command, parserInfo->addressType, parserInfo->port, parserInfo->domainNameLength);
+    CommandSocksv5 cmd = parserInfo->command;
     switch (cmd) {
         case CMD_CONNECT:
-            
             break;
         case CMD_BIND:
         case CMD_UDP_ASSOCIATE:
+            log(ERROR, "Command not implemented: 0x%x", parserInfo->command);
         default:
-            log(ERROR, "client sent invalid COMMAND: 0x%x", cmd);
+            log(ERROR, "client sent invalid COMMAND: 0x%x", parserInfo->command);
             // The reply specified REP as X'07' "Command not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
             sendBytesWithMetrics(key->fd, "\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
     }
-    
-    int reserved = buffer_read(&clientData->client_buffer); // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
-    AddressTypeSocksv5 addressType = buffer_read(&clientData->client_buffer);
+
+    AddressTypeSocksv5 addressType = parserInfo->addressType;
     char hostname[MAX_ADDR_BUFFER] = {0};
     int destinationPort = 0;
 
@@ -92,9 +115,10 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         case SOCKSV5_ADDR_TYPE_IPV4: {
             addrHints.ai_family = AF_INET;
             struct in_addr addr;
-            buffer_read_bytes(&clientData->client_buffer, (uint8_t *)&addr, 4); // ipv4
-            buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
-            destinationPort = ntohs(*(uint16_t *)hostname);
+            log(DEBUG, "1");
+            memcpy(&addr, &parserInfo->ipv4, sizeof(addr));
+            log(DEBUG, "2");
+            memcpy(&destinationPort, &parserInfo->port, sizeof(destinationPort));
             inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
             break;
         }
@@ -104,11 +128,13 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
                 log(ERROR, "malloc: %s", strerror(errno));
                 return STM_ERROR;
             }
-            uint8_t domainNameSize = buffer_read(&clientData->client_buffer);
-            buffer_read_bytes(&clientData->client_buffer, job->host, domainNameSize);
+            uint8_t domainNameSize = parserInfo->domainNameLength;
+            log(DEBUG, "3");
+            memcpy(job->host, parserInfo->domainName, domainNameSize);
+            job->host[domainNameSize] = '\0'; // Null-terminate the domain
 
-            buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
-            destinationPort = ntohs(*(uint16_t *)hostname);
+            log(DEBUG, "4");
+            destinationPort = parserInfo->port;
 
             pthread_t tid;
             snprintf(job->service, sizeof(job->service) - 1, "%u", destinationPort);
@@ -129,9 +155,10 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         case SOCKSV5_ADDR_TYPE_IPV6: {
             addrHints.ai_family = AF_INET6;
             struct in6_addr addr;
-            buffer_read_bytes(&clientData->client_buffer, hostname, 16); // 
-            buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
-            destinationPort = ntohs(*(uint16_t *)hostname);
+            log(DEBUG, "5");
+            memcpy(&addr, &parserInfo->ipv6, 16);
+            log(DEBUG, "6");
+            memcpy(&destinationPort, &parserInfo->port, sizeof(destinationPort));
             inet_ntop(AF_INET6, &addr, hostname, INET6_ADDRSTRLEN);
 
             break;
@@ -163,6 +190,113 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
     selector_set_interest_key(key, OP_WRITE); 
 
     return beginConnection(key);
+
+    // ClientData *clientData = key->data;
+// 
+//     size_t bufferLimit = 0;
+//     uint8_t *clientBuffer = buffer_write_ptr(&clientData->client_buffer, &bufferLimit);
+//     ssize_t bytesRead = recvBytesWithMetrics(key->fd, clientBuffer, bufferLimit, 0);
+//     buffer_write_adv(&clientData->client_buffer, bytesRead);
+//     // TODO: Ojo que está ignorando la versión (debería rechazar si la versión es incorrecta)
+//     // Para rechazar deberíamos mandar un mensaje que diga "05 Connection Refused"
+//     uint8_t sockVersion = buffer_read(&clientData->client_buffer);
+//     CommandSocksv5 cmd = buffer_read(&clientData->client_buffer);
+//     switch (cmd) {
+//         case CMD_CONNECT:
+            
+//             break;
+//         case CMD_BIND:
+//         case CMD_UDP_ASSOCIATE:
+//         default:
+//             log(ERROR, "client sent invalid COMMAND: 0x%x", cmd);
+//             // The reply specified REP as X'07' "Command not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
+//             sendBytesWithMetrics(key->fd, "\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
+//             return STM_ERROR;
+//     }
+    
+//     int reserved = buffer_read(&clientData->client_buffer); // TODO: QUIZA CHEQUEAR QUE VALGA 0x00
+//     AddressTypeSocksv5 addressType = buffer_read(&clientData->client_buffer);
+//     char hostname[MAX_ADDR_BUFFER] = {0};
+//     int destinationPort = 0;
+
+//     struct addrinfo addrHints = {0};
+//     addrHints.ai_socktype = SOCK_STREAM;
+//     addrHints.ai_protocol = IPPROTO_TCP;
+//     switch (addressType) {
+//         case SOCKSV5_ADDR_TYPE_IPV4: {
+//             addrHints.ai_family = AF_INET;
+//             struct in_addr addr;
+//             buffer_read_bytes(&clientData->client_buffer, (uint8_t *)&addr, 4); // ipv4
+//             buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
+//             destinationPort = ntohs(*(uint16_t *)hostname);
+//             inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
+//             break;
+//         }
+//         case SOCKSV5_ADDR_TYPE_DOMAIN_NAME: {
+//             DnsJob *job = calloc(1, sizeof(*job));
+//             if (!job) {
+//                 log(ERROR, "malloc: %s", strerror(errno));
+//                 return STM_ERROR;
+//             }
+//             uint8_t domainNameSize = buffer_read(&clientData->client_buffer);
+//             buffer_read_bytes(&clientData->client_buffer, job->host, domainNameSize);
+
+//             buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
+//             destinationPort = ntohs(*(uint16_t *)hostname);
+
+//             pthread_t tid;
+//             snprintf(job->service, sizeof(job->service) - 1, "%u", destinationPort);
+
+//             job->result = &clientData->connectAddresses;
+//             job->client_fd = clientData->client_fd;
+//             job->selector = key->s;
+
+//             if (pthread_create(&tid, NULL, dns_thread_func, job) != 0) {
+//                 log(ERROR, "pthread_create: %s", strerror(errno));
+//                 free(job);
+//                 return STM_ERROR;
+//             }
+//             pthread_detach(tid);
+
+//             return STM_DNS_DONE;
+//         }
+//         case SOCKSV5_ADDR_TYPE_IPV6: {
+//             addrHints.ai_family = AF_INET6;
+//             struct in6_addr addr;
+//             buffer_read_bytes(&clientData->client_buffer, hostname, 16); // 
+//             buffer_read_bytes(&clientData->client_buffer, hostname, 2); // port
+//             destinationPort = ntohs(*(uint16_t *)hostname);
+//             inet_ntop(AF_INET6, &addr, hostname, INET6_ADDRSTRLEN);
+
+//             break;
+//         }
+//         default:
+//             log(ERROR, "client sent invalid ADDRESS_TYPE: 0x%x", cmd);
+//             // The reply specified REP as X'08' "Address type not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
+//             sendBytesWithMetrics(key->fd, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
+//             return STM_ERROR;
+//     }
+//     char service[6] = {0};
+//     sprintf(service, "%d", destinationPort);
+    
+//     int getAddrStatus = getaddrinfo(hostname, service, &addrHints, &clientData->connectAddresses);
+//     if(getAddrStatus != 0) {
+//         log(ERROR, "getaddrinfo() failed");
+//         // The reply specifies ATYP as IPv4 and BND as 0.0.0.0:0.
+//         char errorMessage[] = "\x05\x00\x01\x00\x00\x00\x00\x00\x00";
+//         // We calculate the REP value based on the type of error returned by getaddrinfo
+//         errorMessage[1] =
+//             getAddrStatus == EAI_FAMILY   ? '\x08'  // REP is "Address type not supported"
+//             : getAddrStatus == EAI_NONAME ? '\x04'  // REP is "Host Unreachable"
+//                                           : '\x01'; // REP is "General SOCKS server failure"
+//         sendBytesWithMetrics(key->fd, errorMessage, sizeof(errorMessage), 0);
+//         return STM_ERROR;
+//     }
+//     log(DEBUG, "cmd=%d addressType=%d destinationPort=%u", cmd, addressType, destinationPort);
+
+//     selector_set_interest_key(key, OP_WRITE); 
+
+//     return beginConnection(key);
 }
 
 StateSocksv5 beginConnection(struct selector_key *key) {

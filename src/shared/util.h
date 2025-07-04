@@ -50,6 +50,22 @@ typedef struct socks5_login_parserinfo {
     uint8_t substate;
 } socks5_login_parserinfo;
 
+typedef struct socks5_request_parserinfo {
+    // -------- Datos parseados --------
+    uint8_t socksVersion; // Debe ser 5
+    uint8_t command; // CMD_CONNECT, CMD_BIND, CMD_UDP_ASSOCIATE
+    uint8_t reserved; // Ignorar
+    uint8_t addressType; // SOCKSV5_ADDR_TYPE_IPV4, SOCKSV5_ADDR_TYPE_DOMAIN_NAME, SOCKSV5_ADDR_TYPE_IPV6
+    uint8_t wtf[4];
+    uint32_t ipv4;
+    uint8_t ipv6[16];
+    uint8_t domainNameLength; // Longitud del nombre de dominio
+    char domainName[BUFSIZE];
+    uint16_t port; // Puerto del destino
+    // -------- Datos internos del parser --------
+    uint8_t substate;
+} socks5_request_parserinfo;
+
 typedef struct ClientData {
     int           client_fd;    // descriptor del socket del cliente SOCKS
     int           outgoing_fd; 
@@ -65,8 +81,10 @@ typedef struct ClientData {
     //char password[USERNAME_MAX_LENGTH];
     // parsing
     AuthMethod authMethod;
+
     socks5_initial_parserinfo initialParserInfo;
     socks5_login_parserinfo loginParserInfo;
+    socks5_request_parserinfo requestParser;
 
     ssize_t toWrite;
     ssize_t toRead;
