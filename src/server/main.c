@@ -98,10 +98,9 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
     for(int i = 0; i < args.users_n; i++) {
         add_user(args.users[i].name, args.users[i].pass);
         log(INFO, "User added: %s", args.users[i].name);
-
     }
-    //load_users();
     log(INFO, "Users loaded successfully");
+    
     metrics_init();
     log(INFO, "Metrics initialized successfully");
 
