@@ -1,0 +1,15 @@
+# abrir socks5 de ssh
+ssh -D 1080 jaliu@pampero.itba.edu.ar
+
+# wireshark
+wsl sudo tcpdump -i lo -U -n -w - 'tcp port 1024' | "D:\Programs\Wireshark\Wireshark.exe" -k -i -
+
+curl -x socks5h://john_dow:1234@127.0.0.1:1024 example.org
+
+.\chrome.exe --proxy-server=socks5://127.0.0.1:1024
+
+# python mandar paquetes manualmente
+# import socket
+# s = socket.create_connection(("localhost", 1024))
+# s.send(bytes.fromhex("05 01 00"))
+# print(s.recv(10))

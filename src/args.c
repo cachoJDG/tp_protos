@@ -45,8 +45,8 @@ user(char* s, struct users* user)
 static void
 version(void)
 {
-    fprintf(stderr, "socks5v version 0.0\n"
-            "ITBA Protocolos de Comunicación 2025/1 -- Grupo X\n"
+    fprintf(stderr, "socks5v version 1.0\n"
+            "ITBA Protocolos de Comunicación 2025/1 -- Grupo 20\n"
             "AQUI VA LA LICENCIA\n");
 }
 
@@ -144,6 +144,6 @@ parse_args(const int argc, char** argv, struct socks5args* args)
             fprintf(stderr, "%s ", argv[optind++]);
         }
         fprintf(stderr, "\n");
-        exit(1);
+        usage(argv[0]);
     }
 }

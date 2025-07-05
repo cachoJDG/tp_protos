@@ -14,6 +14,7 @@
 #include "../users/users.h"
 #include "../monitoring/monitoring-server.h"
 #include "../monitoring/monitoringMetrics.h"
+#include "../args.h"
 
 #define MAXPENDING 32 // Maximum outstanding connection requests
 #define SELECTOR_CAPACITY 1024
@@ -22,15 +23,19 @@
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
  ** y crear el socket pasivo, para que escuche en cualquier IP, ya sea v4 o v6
  */
-int setupTCPServerSocket(const char *service) {
+int setupTCPServerSocket(char *address, short servicePort) {
 	// Construct the server address structure
-    char addrBuffer[MAX_ADDR_BUFFER];
+    char addrBuffer[MAX_ADDR_BUFFER] = {0};
 	struct addrinfo addrCriteria;                   // Criteria for address match
 	memset(&addrCriteria, 0, sizeof(addrCriteria)); // Zero out structure
 	addrCriteria.ai_family = AF_UNSPEC;             // Any address family
 	addrCriteria.ai_flags = AI_PASSIVE;             // Accept on any address/port
 	addrCriteria.ai_socktype = SOCK_STREAM;         // Only stream sockets
 	addrCriteria.ai_protocol = IPPROTO_TCP;         // Only TCP protocol
+
+    // TODO: re vago esta solucion. ver si se puede hacer sin getaddrinfo
+    char service[6] = {0}; // max 5 digits + null terminator
+    snprintf(service, sizeof(service), "%hu", servicePort);
 
 	struct addrinfo *servAddr; 			// List of server addresses
 	int rtnVal = getaddrinfo(NULL, service, &addrCriteria, &servAddr);
@@ -51,7 +56,7 @@ int setupTCPServerSocket(const char *service) {
 			log(DEBUG, "Cant't create socket on %s : %s ", printAddressPort(addr, addrBuffer), strerror(errno));  
 			continue;       // Socket creation failed; try next address
 		}
-        // man 7 ip. no importa reportar nada si falla.
+        // man 7 ip. no importa reportar nada si falla. Esto es para permitir reutilizar el address
         setsockopt(servSock, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int));
 		// Bind to ALL the address and set socket to listen
 		if ((bind(servSock, addr->ai_addr, addr->ai_addrlen) == 0) && (listen(servSock, MAXPENDING) == 0)) {
@@ -77,28 +82,30 @@ int setupTCPServerSocket(const char *service) {
 static void
 sigterm_handler(const int signal) {
     log(INFO, "signal %d, cleaning up and exiting", signal);
-    exit(1);
+    exit(1);// TODO: en vez de hacer exit. deberiamos llamar las cosas de limpieza.
+    // la otra opcioon es setear un bool para que el while salga 
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para el ip del server
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     close(STDIN_FILENO);
 
-    if (argc != 3) {
-        log(FATAL, "usage: %s <SOCKS5 Port> <Monitoring Port>", argv[0]);
-        return 1;
-    }
+    struct socks5args args = {0};
+    parse_args(argc, argv, &args);
+    // TODO: que es args.disectors_enabled ???
 
+    // TODO: agregar los usuarios recibidos por argumentos en la linea de comandos
+    // args.users
     load_users();
     log(INFO, "Users loaded successfully");
     metrics_init();
     log(INFO, "Metrics initialized successfully");
 
-    int servSock = setupTCPServerSocket(argv[1]);
+    int servSock = setupTCPServerSocket(args.socks_addr, args.socks_port);
     if (servSock < 0) return 1;
 
-    int monitoringSock = setupTCPServerSocket(argv[2]);
+    int monitoringSock = setupTCPServerSocket(args.mng_addr, args.mng_port);
     if (monitoringSock < 0) {
         close(servSock);
         return 1;

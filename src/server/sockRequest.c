@@ -115,9 +115,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         case SOCKSV5_ADDR_TYPE_IPV4: {
             addrHints.ai_family = AF_INET;
             struct in_addr addr;
-            log(DEBUG, "1");
             memcpy(&addr, &parserInfo->ipv4, sizeof(addr));
-            log(DEBUG, "2");
             memcpy(&destinationPort, &parserInfo->port, sizeof(destinationPort));
             inet_ntop(AF_INET, &addr, hostname, INET_ADDRSTRLEN);
             break;
@@ -129,11 +127,9 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
                 return STM_ERROR;
             }
             uint8_t domainNameSize = parserInfo->domainNameLength;
-            log(DEBUG, "3");
             memcpy(job->host, parserInfo->domainName, domainNameSize);
             job->host[domainNameSize] = '\0'; // Null-terminate the domain
 
-            log(DEBUG, "4");
             destinationPort = parserInfo->port;
 
             pthread_t tid;
@@ -155,9 +151,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         case SOCKSV5_ADDR_TYPE_IPV6: {
             addrHints.ai_family = AF_INET6;
             struct in6_addr addr;
-            log(DEBUG, "5");
             memcpy(&addr, &parserInfo->ipv6, 16);
-            log(DEBUG, "6");
             memcpy(&destinationPort, &parserInfo->port, sizeof(destinationPort));
             inet_ntop(AF_INET6, &addr, hostname, INET6_ADDRSTRLEN);
 

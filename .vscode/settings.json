@@ -16,6 +16,7 @@
         "monitoringserverutils.h": "c",
         "monitoringmetrics.h": "c",
         "unistd.h": "c",
-        "stddef.h": "c"
+        "stddef.h": "c",
+        "args.h": "c"
     }
 }

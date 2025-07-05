@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "../shared/util.h"
 
 #define FILENAME "src/users/users.csv"
 //#define FILENAME "users.csv"
 
 typedef struct {
-    char username[50];
-    char password[50];
+    char username[USERNAME_MAX_LENGTH];
+    char password[USERNAME_MAX_LENGTH];
 } TUserData;
 
 TUserData users[216];
@@ -27,7 +28,7 @@ void load_users() {
         perror("No se pudo abrir el archivo de usuarios");
         return;
     }
-    char line[128];
+    char line[USERNAME_MAX_LENGTH * 2] = {0};
     while (fgets(line, sizeof(line), f) && user_count < 216) {
         char *username = strtok(line, ";");
         char *password = strtok(NULL, ";");
