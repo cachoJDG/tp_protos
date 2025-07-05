@@ -95,9 +95,12 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
     parse_args(argc, argv, &args);
     // TODO: que es args.disectors_enabled ???
 
-    // TODO: agregar los usuarios recibidos por argumentos en la linea de comandos
-    // args.users
-    load_users();
+    for(int i = 0; i < args.users_n; i++) {
+        add_user(args.users[i].name, args.users[i].pass);
+        log(INFO, "User added: %s", args.users[i].name);
+
+    }
+    //load_users();
     log(INFO, "Users loaded successfully");
     metrics_init();
     log(INFO, "Metrics initialized successfully");
