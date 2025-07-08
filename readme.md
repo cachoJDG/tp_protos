@@ -1,11 +1,11 @@
-# Entrega Simulacro para Protocolos de Comunicación
+# Entrega Simulacro para el TPE de Protocolos de Comunicación
 
 ## Implementaciones
 
 1. **Proxy socks5**
     - Acepta login (opcional)
-    - Acepta fragmentación hasta cierto punto
-    - Acepta combinación de paquetes hasta cierto punto
+    - Acepta fragmentación (hasta cierto punto)
+    - Acepta combinación de paquetes (hasta cierto punto)
 2. **Protocolo de monitoreo** (binario)
     - Agregar usuarios
     - Mostrar usuarios
@@ -14,7 +14,10 @@
 
 ## Comandos del cliente
 
-Usage: ./bin/client \<server> \<port> \<command> [args...]
+**Uso:** ./bin/client \<servidor> \<puerto> \<comando> [args...]
+
+**Comandos con argumentos:**
+
 
     LIST USERS
     ADD USER <username> <password>
@@ -24,11 +27,13 @@ Usage: ./bin/client \<server> \<port> \<command> [args...]
 
 ## Protocolo de monitoreo
 
-Comming soon
+Estamos trabajando en eso
 
 ## Comandos del servidor
 
-Usage: ./bin/socks5v [OPTION]...
+**Uso:** ./bin/socks5v [opciones...]
+
+**Opciones:**
 
     -h               Imprime la ayuda y termina.
     -l <SOCKS addr>  Dirección donde servirá el proxy SOCKS.
@@ -71,7 +76,7 @@ NOTA: A veces tira aborts o cosas raras en páginas pesadas como Fandom, pero a 
 export MONITORING_TOKEN="john_doe|1234"
 ```
 
-NOTA: el usuario debe estar en la lista de usuarios
+NOTA: el usuario debe estar en la lista de usuarios (Ver paso 2)
 
 6. Llamar funciones del cliente
 
@@ -79,6 +84,7 @@ NOTA: el usuario debe estar en la lista de usuarios
 ./bin/client 127.0.0.1 2022 LIST USERS
 ./bin/client 127.0.0.1 2022 ADD USER protosmaster52 1234
 ```
+
 
 
 
