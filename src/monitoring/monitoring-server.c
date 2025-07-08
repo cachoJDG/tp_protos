@@ -41,6 +41,23 @@ int acceptTCPConnection(int servSock) {
 	return clntSock;
 }
 
+ssize_t recv_to_monitoring_buffer(int fd, buffer *buf, ssize_t maxBytes) {
+    size_t available;
+    uint8_t *writePtr = buffer_write_ptr(buf, &available);
+    
+    ssize_t toRead = (maxBytes < available) ? maxBytes : available;
+    
+    if (toRead <= 0) {
+        return 0;
+    }
+    
+    ssize_t bytesRead = recv(fd, writePtr, toRead, 0);
+    if (bytesRead > 0) {
+        buffer_write_adv(buf, bytesRead);
+    }
+    return bytesRead;
+}
+
 void print_hex_compact(const char* label, const unsigned char* buffer, size_t length) {
     if (current_level <= DEBUG) {
         printf("%s (%zu bytes): ", label, length);
@@ -53,8 +70,15 @@ void print_hex_compact(const char* label, const unsigned char* buffer, size_t le
 }
 
 void stm_read_monitoring_arrival(unsigned state, struct selector_key *key) {
-    MonitoringClientData *MonitoringClientData = key->data;
-    memset(MonitoringClientData->buffer, 0, BUFSIZE_MONITORING);
+    MonitoringClientData *clientData = key->data;
+    
+    // In case of a new connection, reset the buffer
+    if (state == STM_LOGIN_MONITORING_READ) {
+        buffer_reset(&clientData->client_buffer);
+        clientData->toRead = 1;
+        clientData->parsing_state = 0;
+    }
+    
     log(DEBUG, "Entering state %d for client fd=%d", state, key->fd);
 }
 
@@ -71,50 +95,93 @@ void stm_done_monitoring_arrival(unsigned state, struct selector_key *key) {
 }
 
 enum StateMonitoring stm_login_monitoring_read(struct selector_key *key) {
-    MonitoringClientData *MonitoringClientData = key->data;
-    ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE_MONITORING - 1, 0);
+    MonitoringClientData *clientData = key->data;
     
-    if (bytes <= 0) {
-        log(ERROR, "Failed to receive login data from client fd=%d", key->fd);
+    // 1. Leer datos al buffer (respetando toRead)
+    ssize_t bytesRead = recv_to_monitoring_buffer(key->fd, &clientData->client_buffer, clientData->toRead);
+    
+    if (bytesRead <= 0) {
+        if (bytesRead == 0) {
+            log(INFO, "Client fd=%d closed connection during login", key->fd);
+        } else {
+            log(ERROR, "recv() failed in login_read for fd=%d: %s", key->fd, strerror(errno));
+        }
         return STM_MONITORING_ERROR;
     }
     
-    char *message = MonitoringClientData->buffer;
-    if (bytes < 3) {
-        log(ERROR, "Invalid login message length %zd from client fd=%d", bytes, key->fd);
-        return STM_MONITORING_ERROR;
-    }
-
-    int index = 1;
-    int usernameLength = (unsigned char)message[index++];
+    // 2. Actualizar contador
+    clientData->toRead -= bytesRead;
     
-    if (usernameLength <= 0 || usernameLength >= 64 || index + usernameLength >= bytes) {
-        log(ERROR, "Invalid username length %d from client fd=%d", usernameLength, key->fd);
-        return STM_MONITORING_ERROR;
-    }
-
-    memcpy(MonitoringClientData->username, message + index, usernameLength);
-    MonitoringClientData->username[usernameLength] = '\0';
-    index += usernameLength;
-    
-    if (index >= bytes) {
-        log(ERROR, "Invalid message format from client fd=%d", key->fd);
-        return STM_MONITORING_ERROR;
+    // 3. Verificar si tenemos datos suficientes
+    if (clientData->toRead > 0) {
+        return STM_LOGIN_MONITORING_READ; // Necesita más datos
     }
     
-    int passwordLength = (unsigned char)message[index++];
-    
-    if (passwordLength <= 0 || passwordLength >= 64 || index + passwordLength > bytes) {
-        log(ERROR, "Invalid password length %d from client fd=%d", passwordLength, key->fd);
-        return STM_MONITORING_ERROR;
+    // 4. Parsear login (ahora sabemos que tenemos todos los datos)
+    if (clientData->parsing_state == 0) {
+        // Primer byte: comando (debería ser LOGIN)
+        uint8_t command = buffer_read(&clientData->client_buffer);
+        if (command != 1) { // Asumiendo que LOGIN = 1
+            log(ERROR, "Invalid login command %d from client fd=%d", command, key->fd);
+            return STM_MONITORING_ERROR;
+        }
+        
+        // Necesitamos leer longitud de username
+        clientData->toRead = 1;
+        clientData->parsing_state = 1;
+        return STM_LOGIN_MONITORING_READ;
     }
-
-    memcpy(MonitoringClientData->password, message + index, passwordLength);
-    MonitoringClientData->password[passwordLength] = '\0';
-    log(INFO, "Login attempt from client fd=%d, username: %s", key->fd, MonitoringClientData->username);
-
-    selector_set_interest_key(key, OP_WRITE);
-    return STM_LOGIN_MONITORING_WRITE;
+    
+    if (clientData->parsing_state == 1) {
+        // Leer longitud de username
+        uint8_t usernameLength = buffer_read(&clientData->client_buffer);
+        if (usernameLength <= 0 || usernameLength >= 64) {
+            log(ERROR, "Invalid username length %d from client fd=%d", usernameLength, key->fd);
+            return STM_MONITORING_ERROR;
+        }
+        
+        // Necesitamos username + 1 byte (password length)
+        clientData->toRead = usernameLength + 1;
+        clientData->parsing_state = 2;
+        clientData->expected_message_size = usernameLength;
+        return STM_LOGIN_MONITORING_READ;
+    }
+    
+    if (clientData->parsing_state == 2) {
+        // Leer username
+        buffer_read_bytes(&clientData->client_buffer, (uint8_t*)clientData->username, clientData->expected_message_size);
+        clientData->username[clientData->expected_message_size] = '\0';
+        
+        // Leer longitud de password
+        uint8_t passwordLength = buffer_read(&clientData->client_buffer);
+        if (passwordLength <= 0 || passwordLength >= 64) {
+            log(ERROR, "Invalid password length %d from client fd=%d", passwordLength, key->fd);
+            return STM_MONITORING_ERROR;
+        }
+        
+        // Necesitamos el password
+        clientData->toRead = passwordLength;
+        clientData->parsing_state = 3;
+        clientData->expected_message_size = passwordLength;
+        return STM_LOGIN_MONITORING_READ;
+    }
+    
+    if (clientData->parsing_state == 3) {
+        // Leer password
+        buffer_read_bytes(&clientData->client_buffer, (uint8_t*)clientData->password, clientData->expected_message_size);
+        clientData->password[clientData->expected_message_size] = '\0';
+        
+        log(INFO, "Login attempt from client fd=%d, username: %s", key->fd, clientData->username);
+        
+        // Reset para próxima fase
+        clientData->toRead = 1;
+        clientData->parsing_state = 0;
+        
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_LOGIN_MONITORING_WRITE;
+    }
+    
+    return STM_MONITORING_ERROR;
 }
 
 enum StateMonitoring stm_login_monitoring_write(struct selector_key *key) {
@@ -146,24 +213,144 @@ enum StateMonitoring stm_login_monitoring_write(struct selector_key *key) {
 }
 
 enum StateMonitoring stm_request_monitoring_read(struct selector_key *key) {
-    MonitoringClientData *MonitoringClientData = key->data;
-    ssize_t bytes = recv(key->fd, MonitoringClientData->buffer, BUFSIZE_MONITORING - 1, 0);
+    MonitoringClientData *clientData = key->data;
     
-    if (bytes <= 0) {
-        if (bytes == 0) {
+    // 1. Leer datos al buffer
+    ssize_t bytesRead = recv_to_monitoring_buffer(key->fd, &clientData->client_buffer, clientData->toRead);
+    
+    if (bytesRead <= 0) {
+        if (bytesRead == 0) {
             log(INFO, "Client fd=%d closed connection during request", key->fd);
         } else {
             log(ERROR, "recv() failed in request_read for fd=%d: %s", key->fd, strerror(errno));
         }
         return STM_MONITORING_ERROR;
     }
-
-    log(DEBUG, "Received %zd bytes for request from client fd=%d", bytes, key->fd);
-    print_hex_compact("Request data received", (unsigned char*)MonitoringClientData->buffer, bytes);
-
-    MonitoringClientData->bytes = bytes;
-    selector_set_interest_key(key, OP_WRITE);
-    return STM_REQUEST_MONITORING_WRITE;
+    
+    // 2. Actualizar contador
+    clientData->toRead -= bytesRead;
+    
+    // 3. Verificar si tenemos datos suficientes
+    if (clientData->toRead > 0) {
+        return STM_REQUEST_MONITORING_READ; // Necesita más datos
+    }
+    
+    // 4. Parsear según estado
+    if (clientData->parsing_state == 0) {
+        // Leer comando
+        uint8_t command = buffer_read(&clientData->client_buffer);
+        
+        // Determinar cuántos bytes más necesita según el comando
+        switch(command) {
+            case LIST_USERS:
+            case GET_METRICS:
+                // Comandos sin parámetros - ya terminamos
+                clientData->buffer[0] = command;
+                clientData->bytes = 1;
+                clientData->toRead = 1; // Reset para próximo comando
+                clientData->parsing_state = 0;
+                selector_set_interest_key(key, OP_WRITE);
+                return STM_REQUEST_MONITORING_WRITE;
+                
+            case ADD_USER:
+            case CHANGE_PASSWORD:
+                // Necesitamos leer longitud de username
+                clientData->buffer[0] = command;
+                clientData->toRead = 1;
+                clientData->parsing_state = 1;
+                clientData->bytes = 1; // Ya tenemos el comando
+                return STM_REQUEST_MONITORING_READ;
+                
+            case REMOVE_USER:
+                // Solo necesita username
+                clientData->buffer[0] = command;
+                clientData->toRead = 1;
+                clientData->parsing_state = 4; // Estado especial para REMOVE
+                clientData->bytes = 1;
+                return STM_REQUEST_MONITORING_READ;
+                
+            default:
+                clientData->buffer[0] = command;
+                clientData->bytes = 1;
+                clientData->toRead = 1;
+                clientData->parsing_state = 0;
+                selector_set_interest_key(key, OP_WRITE);
+                return STM_REQUEST_MONITORING_WRITE;
+        }
+    }
+    
+    // Estados para ADD_USER y CHANGE_PASSWORD
+    if (clientData->parsing_state == 1) {
+        // Leer longitud de username
+        uint8_t usernameLength = buffer_read(&clientData->client_buffer);
+        clientData->buffer[clientData->bytes++] = usernameLength;
+        
+        clientData->toRead = usernameLength;
+        clientData->parsing_state = 2;
+        clientData->expected_message_size = usernameLength;
+        return STM_REQUEST_MONITORING_READ;
+    }
+    
+    if (clientData->parsing_state == 2) {
+        // Leer username
+        buffer_read_bytes(&clientData->client_buffer, (uint8_t*)&clientData->buffer[clientData->bytes], clientData->expected_message_size);
+        clientData->bytes += clientData->expected_message_size;
+        
+        // Para CHANGE_PASSWORD necesitamos password, para ADD_USER también
+        clientData->toRead = 1; // Longitud de password
+        clientData->parsing_state = 3;
+        return STM_REQUEST_MONITORING_READ;
+    }
+    
+    if (clientData->parsing_state == 3) {
+        // Leer longitud de password
+        uint8_t passwordLength = buffer_read(&clientData->client_buffer);
+        clientData->buffer[clientData->bytes++] = passwordLength;
+        
+        clientData->toRead = passwordLength;
+        clientData->parsing_state = 5; // Estado final
+        clientData->expected_message_size = passwordLength;
+        return STM_REQUEST_MONITORING_READ;
+    }
+    
+    if (clientData->parsing_state == 4) {
+        // Estado especial para REMOVE_USER (solo username)
+        uint8_t usernameLength = buffer_read(&clientData->client_buffer);
+        clientData->buffer[clientData->bytes++] = usernameLength;
+        
+        clientData->toRead = usernameLength;
+        clientData->parsing_state = 6; // Estado final para REMOVE
+        clientData->expected_message_size = usernameLength;
+        return STM_REQUEST_MONITORING_READ;
+    }
+    
+    if (clientData->parsing_state == 5) {
+        // Leer password (estado final para ADD_USER/CHANGE_PASSWORD)
+        buffer_read_bytes(&clientData->client_buffer, (uint8_t*)&clientData->buffer[clientData->bytes], clientData->expected_message_size);
+        clientData->bytes += clientData->expected_message_size;
+        
+        // Reset para próximo comando
+        clientData->toRead = 1;
+        clientData->parsing_state = 0;
+        
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_REQUEST_MONITORING_WRITE;
+    }
+    
+    if (clientData->parsing_state == 6) {
+        // Leer username (estado final para REMOVE_USER)
+        buffer_read_bytes(&clientData->client_buffer, (uint8_t*)&clientData->buffer[clientData->bytes], clientData->expected_message_size);
+        clientData->bytes += clientData->expected_message_size;
+        
+        // Reset para próximo comando
+        clientData->toRead = 1;
+        clientData->parsing_state = 0;
+        
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_REQUEST_MONITORING_WRITE;
+    }
+    
+    return STM_MONITORING_ERROR;
 }
 
 enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
@@ -332,7 +519,13 @@ void handle_read_passive_monitoring(struct selector_key *key) {
         close(clientSocket);
         return;
     }
-    log(DEBUG, "Allocated %zu bytes for MonitoringClientData", sizeof(MonitoringClientData));
+    log(DEBUG, "Allocated %zu bytes for MonitoringClientData", sizeof(struct MonitoringClientData));
+
+    
+    buffer_init(&MonitoringClientData->client_buffer, BUFSIZE_MONITORING, MonitoringClientData->buffer_data);
+    MonitoringClientData->toRead = 1;
+    MonitoringClientData->parsing_state = 0;
+    MonitoringClientData->expected_message_size = 0;
 
     MonitoringClientData->stm.initial = STM_LOGIN_MONITORING_READ;
     MonitoringClientData->stm.max_state = STM_MONITORING_ERROR;

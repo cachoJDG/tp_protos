@@ -85,8 +85,8 @@ bool authClient(int clientSocket) {
 		return -1;
 	}
 	
-	char *clientName = strtok(token, "|");
-	char *clientPassword = strtok(NULL, "|");
+	char *clientName = strtok(token, ":");
+	char *clientPassword = strtok(NULL, ":");
 
 	if (clientName == NULL || clientPassword == NULL) {
 		fprintf(stderr, "Client error: invalid token format\n");
@@ -123,7 +123,7 @@ bool authClient(int clientSocket) {
     }
 
     if(message[1] == 0) {
-        fprintf(stderr, "Client error: incorrect password");
+        fprintf(stderr, "Client error: incorrect password\n");
         return false;
     }
 

@@ -5,6 +5,7 @@
 #include <netdb.h>
 #include "../selector.h"
 #include "../stm.h"
+#include "../buffer.h"
 
 // Constants
 // #define MAXPENDING 5
@@ -39,6 +40,11 @@ typedef struct MonitoringClientData {
     char username[64];
     char password[64];
     int connection_should_close;
+    buffer client_buffer;           // Buffer para acumular datos
+    uint8_t buffer_data[BUFSIZE_MONITORING];  // Array de datos del buffer
+    ssize_t toRead;                // Bytes que faltan por leer
+    int parsing_state;             // Estado del parsing (0=esperando comando, 1=leyendo datos)
+    size_t expected_message_size;  // Tamaño esperado del mensaje completo
 } MonitoringClientData;
 
 // Public function declarations
