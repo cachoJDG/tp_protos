@@ -20,7 +20,7 @@ USERS_OBJECTS=$(USERS_SOURCES:src/%.c=obj/%.o)
 
 OUTPUT_FOLDER=./bin
 OBJECTS_FOLDER=./obj
-SERVER_OUTPUT_FILE=$(OUTPUT_FOLDER)/socks5v
+SERVER_OUTPUT_FILE=$(OUTPUT_FOLDER)/socks5d
 CLIENT_OUTPUT_FILE=$(OUTPUT_FOLDER)/client
 
 all: server client
@@ -38,7 +38,7 @@ $(CLIENT_OUTPUT_FILE): $(CLIENT_OBJECTS) $(SHARED_OBJECTS)
 
 obj/%.o: src/%.c
 	mkdir -p $(@D)
-	$(CC) $(GCCFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
 	rm -rf $(OUTPUT_FOLDER)
