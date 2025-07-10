@@ -10,7 +10,6 @@ parser_ret ini_version_countmethods(struct buffer *buffer, socks5_initial_parser
     parserInfo->substate = 1;
     *toRead = parserInfo->methodCount;
     if(parserInfo->methodCount == 0) {
-        log(DEBUG, "No authentication methods provided");
         return PARSER_OK; // No methods to read
     }
     log(DEBUG, "socksVersion=%d, methodCount=%d", parserInfo->socksVersion, parserInfo->methodCount);
@@ -41,7 +40,7 @@ parser_ret ini_parse(struct buffer *buffer, socks5_initial_parserinfo* parserInf
         return PARSER_INCOMPLETE; // Not enough bytes read yet
     }
     if (*toRead < 0) {
-        log(FATAL, "Received more bytes than expected in initial read. FIX NEEDED");
+        log(FATAL, "Received more bytes than expected in initial read. FIX NEEDED %ld", *toRead);
         return PARSER_ERROR; // More bytes read than expected
     }
 
@@ -67,7 +66,7 @@ parser_ret login_user_passlength(struct buffer *buffer, socks5_login_parserinfo*
 
     *toRead = parserInfo->passwordLength;
     if(parserInfo->passwordLength == 0) {
-        log(DEBUG, "No password provided, skipping password parsing");
+        // log(DEBUG, "No password provided, skipping password parsing");
         return PARSER_OK;
     }
     parserInfo->substate = 2; // Move to next substate
@@ -98,7 +97,7 @@ parser_ret login_parse(struct buffer *buffer, socks5_login_parserinfo* parserInf
         return PARSER_INCOMPLETE; // Not enough bytes read yet
     }
     if (*toRead < 0) {
-        log(FATAL, "Received more bytes than expected in login read. FIX NEEDED");
+        log(FATAL, "Received more bytes than expected in login read. FIX NEEDED %ld", *toRead);
         return PARSER_ERROR; // More bytes read than expected
     }
     log(DEBUG, "login_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);
@@ -167,7 +166,7 @@ parser_ret req_domainlength(struct buffer *buffer, socks5_request_parserinfo* pa
     parserInfo->domainNameLength = buffer_read(buffer);
     *toRead = parserInfo->domainNameLength; // Domain name
     if (parserInfo->domainNameLength == 0) {
-        log(ERROR, "Domain name length is 0");
+        // log(ERROR, "Domain name length is ");
         return PARSER_ERROR; // Invalid domain name length
     }
     *toRead = parserInfo->domainNameLength;
@@ -176,7 +175,7 @@ parser_ret req_domainlength(struct buffer *buffer, socks5_request_parserinfo* pa
 }
 
 parser_ret req_domainname(struct buffer *buffer, socks5_request_parserinfo* parserInfo, ssize_t *toRead) {
-    buffer_read_bytes(buffer, parserInfo->domainName, parserInfo->domainNameLength);
+    buffer_read_bytes(buffer, (uint8_t *)parserInfo->domainName, parserInfo->domainNameLength);
     parserInfo->domainName[parserInfo->domainNameLength] = '\0'; // Null-terminate the string
     *toRead = sizeof(uint16_t); // Port (2 bytes)
     parserInfo->substate = 5;
@@ -220,7 +219,7 @@ parser_ret request_parse(struct buffer *buffer, socks5_request_parserinfo* parse
         return PARSER_INCOMPLETE; // Not enough bytes read yet
     }
     if (*toRead < 0) {
-        log(FATAL, "Received more bytes than expected in request read. FIX NEEDED");
+        log(FATAL, "Received more bytes than expected in request read. FIX NEEDED %ld", *toRead);
         return PARSER_ERROR; // More bytes read than expected
     }
     log(DEBUG, "request_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);

@@ -34,7 +34,7 @@ typedef struct socks5_initial_parserinfo {
     // -------- Datos parseados --------
     uint8_t socksVersion; 
     uint8_t methodCount; 
-    AuthMethod authMethods[BUFSIZE];
+    uint8_t authMethods[256];
     // -------- Datos internos del parser --------
     uint8_t substate;
 } socks5_initial_parserinfo;

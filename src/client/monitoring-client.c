@@ -182,10 +182,14 @@ int main(int argc, char *argv[]) {
 	// Create a reliable, stream socket using TCP
 	int clientSocket = tcpClientSocket(server, port);
 	if (clientSocket < 0) {
-		log(FATAL, "socket() failed")
+		log(FATAL, "socket() failed %d", clientSocket);
+		return 1;
 	}
     bool authSuccess = authClient(clientSocket);
-
+	if(!authSuccess) {
+		fprintf(stderr, "user auth failed\n");
+		return 1;
+	}
 	int commandCount = argc - 3;
     char **commands = malloc(commandCount * sizeof(char*));
     if (commands == NULL) {

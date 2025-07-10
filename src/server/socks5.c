@@ -74,11 +74,9 @@ static int acceptTCPConnection(int servSock) {
 	// Wait for a client to connect
 	int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
 	if (clntSock < 0) {
-		log(ERROR, "accept() failed");
 		return -1;
 	}
     if(selector_fd_set_nio(clntSock < 0)) {
-        log(ERROR, "accept() failed");
         return -1;
     }
 
@@ -115,8 +113,8 @@ void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
 // Esto asegura de que SOLAMENTE se haga recv de lo que se pueda recibir
 // y que no se intente leer más de lo que el buffer puede contener.
 ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toRead) {
-    size_t bufferLimit = 0;
-    uint8_t *writePtr = buffer_write_ptr(buffer, &bufferLimit);
+    ssize_t bufferLimit = 0;
+    uint8_t *writePtr = buffer_write_ptr(buffer, (size_t*)&bufferLimit);
 
     ssize_t maxToRead = (bufferLimit > toRead) ? toRead : bufferLimit;
     ssize_t bytesRead = recvBytesWithMetrics(fd, writePtr, maxToRead, 0);
@@ -128,8 +126,8 @@ ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toRead) {
 }
 
 ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toWrite) {
-    size_t bufferLimit = 0;
-    uint8_t *writePtr = buffer_read_ptr(buffer, &bufferLimit);
+    ssize_t bufferLimit = 0;
+    uint8_t *writePtr = buffer_read_ptr(buffer, (size_t *)&bufferLimit);
 
     ssize_t maxToWrite = (bufferLimit > toWrite) ? toWrite : bufferLimit;
     ssize_t bytesWritten = sendBytesWithMetrics(fd, writePtr, maxToWrite, 0);
@@ -142,7 +140,6 @@ ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toWrite) {
 
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
-    log(DEBUG, "stm_initial_read");
     ClientData *clientData = key->data;
     socks5_initial_parserinfo* parserInfo = &clientData->initialParserInfo;
 
@@ -151,7 +148,6 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
-        log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
         return STM_ERROR;
     }
 
@@ -163,7 +159,6 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
-            log(ERROR, "Error parsing initial data");
             return STM_ERROR;
     }
 
@@ -210,13 +205,11 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 
 StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-    log(DEBUG, "stm_initial_write");
 
     // 1. Leo del buffer
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
 
     if(bytesWritten <= 0) {
-        log(ERROR, "Error writing initial response to client");
         return STM_ERROR;
     }
 
@@ -231,9 +224,10 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     switch(clientData->authMethod) {
         case AUTH_USER_PASSWORD:
             return STM_LOGIN_READ;
-        case AUTH_NONE:
+            case AUTH_NONE:
             return STM_REQUEST_READ;
         default:
+            return STM_ERROR;
     }
     selector_set_interest_key(key, OP_NOOP);
     log(INFO, "Unsupported authentication method %d", clientData->authMethod);
@@ -242,13 +236,11 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
 
 void stm_login_read_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    log(DEBUG, "stm_login_read_arrival");
     login_initialize(&clientData->loginParserInfo, &clientData->toRead);
     buffer_reset(&clientData->client_buffer);
 }
 
 StateSocksv5 stm_login_read(struct selector_key *key) {
-    log(DEBUG, "stm_login_read");
     ClientData *clientData = key->data;
     socks5_login_parserinfo* parserInfo = &clientData->loginParserInfo;
 
@@ -256,7 +248,6 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
-        log(ERROR, "stm machine inconsistency: read handler called without bytes to read");
         return STM_ERROR;
     }
 
@@ -268,7 +259,6 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_LOGIN_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
-            log(ERROR, "Error parsing login data");
             return STM_ERROR;
     }
 
@@ -296,7 +286,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
     // 4. Preparo buffers para la respuesta
     buffer_reset(&clientData->outgoing_buffer);
-    ssize_t bufferLimit = 0;
+    size_t bufferLimit = 0;
     uint8_t *response = buffer_write_ptr(&clientData->outgoing_buffer, &bufferLimit);
     response[0] = 0x05;
     if(clientData->isLoggedIn) {
@@ -312,14 +302,13 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
 StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-    log(DEBUG, "stm_login_write");
 
     // 1. Leo del buffer
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
 
     if(bytesWritten <= 0) {
         // TODO: En este tipo de situaciones post-send/recv es importante entender bien cómo funciona errno en el sistema de sockets no bloqueantes
-        log(ERROR, "Error writing login response to client");
+        log(ERROR, "Error writing login response to client %ld", bytesWritten);
         return STM_ERROR;
     }
 
@@ -332,23 +321,20 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     // 3. Cambio de estado
     if(clientData->isLoggedIn) {
         selector_set_interest_key(key, OP_READ);
-        log(INFO, "User logged in successfully");
         return STM_REQUEST_READ;
     }
     selector_set_interest_key(key, OP_NOOP);
-    log(INFO, "Unsupported authentication method %d", clientData->authMethod);
+    log(INFO, "Log in failed %d", clientData->authMethod);
     return STM_ERROR;
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
-    ClientData *clientData = key->data; 
-    log(ERROR, ".");
+    // ClientData *clientData = key->data; 
     selector_set_interest_key(key, OP_NOOP);
 }
 
 void stm_done_arrival(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data;
-    log(DEBUG, "done");
 
     close(clientData->client_fd);
     
@@ -387,6 +373,5 @@ void client_handler_close(struct selector_key *key) {
     }
     free(key->data);
     key->data = NULL; // Evitar que se intente liberar de nuevo
-    log(INFO, "handling client close");
     closeSocketWithMetrics(key->fd); // Cerrar el socket del cliente
 }

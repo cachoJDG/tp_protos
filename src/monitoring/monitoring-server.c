@@ -16,7 +16,6 @@
 #define MAX_ADDR_BUFFER_MONITORING 128
 #define SELECTOR_CAPACITY 256
 
-static char addrBuffer[MAX_ADDR_BUFFER_MONITORING];
 struct sockaddr_storage _localAddr;
 
 int acceptTCPConnection(int servSock) {
@@ -27,11 +26,9 @@ int acceptTCPConnection(int servSock) {
 	// Wait for a client to connect
 	int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
 	if (clntSock < 0) {
-		log(ERROR, "accept() failed");
 		return -1;
 	}
     if(selector_fd_set_nio(clntSock < 0)) {
-        log(ERROR, "accept() failed");
         return -1;
     }
 
@@ -42,8 +39,8 @@ int acceptTCPConnection(int servSock) {
 }
 
 ssize_t recv_to_monitoring_buffer(int fd, buffer *buf, ssize_t maxBytes) {
-    size_t available;
-    uint8_t *writePtr = buffer_write_ptr(buf, &available);
+    ssize_t available = 0;
+    uint8_t *writePtr = buffer_write_ptr(buf, (size_t *)&available);
     
     ssize_t toRead = (maxBytes < available) ? maxBytes : available;
     
@@ -500,7 +497,6 @@ void handle_read_passive_monitoring(struct selector_key *key) {
 
     fd_handler *clientHandler = malloc(sizeof(fd_handler));
     if (!clientHandler) {
-        log(ERROR, "Failed to allocate memory for client handler");
         close(clientSocket);
         return;
     }
@@ -514,7 +510,6 @@ void handle_read_passive_monitoring(struct selector_key *key) {
     log(DEBUG, "Size of buffer field: %zu bytes", sizeof(((MonitoringClientData*)0)->buffer));
     MonitoringClientData *MonitoringClientData = calloc(1, sizeof(struct MonitoringClientData));
     if (!MonitoringClientData) {
-        log(ERROR, "Failed to allocate memory for client data");
         free(clientHandler);
         close(clientSocket);
         return;

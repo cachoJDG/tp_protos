@@ -19,7 +19,7 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     log(DEBUG, "stm_connection_traffic_arrival called for socket %d", key->fd);
     ClientData *clientData = key->data; 
 
-    int clientSocket = key->fd;
+    // int clientSocket = key->fd;
     int remoteSocket = clientData->outgoing_fd;
 
     buffer_init(&clientData->outgoing_buffer, BUFSIZE, clientData->remoteBufferData);
@@ -139,7 +139,7 @@ void proxy_handler_block(struct selector_key *key) {
 
 void proxy_handler_close(struct selector_key *key) {
     if (key->data == NULL) {
-        log(ERROR, "proxy_handler_close called with NULL data");
+        log(ERROR, "proxy_handler_close called with NULL data. fd=%d", key->fd);
         return;
     }
     log(INFO, "Closing proxy connection for proxy %d", key->fd);

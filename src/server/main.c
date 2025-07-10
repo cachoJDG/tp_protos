@@ -19,6 +19,8 @@
 #define MAXPENDING 32 // Maximum outstanding connection requests
 #define SELECTOR_CAPACITY 1024
 
+static bool keepRunning = true;
+
 /*
  ** Se encarga de resolver el número de puerto para service (puede ser un string con el numero o el nombre del servicio)
  ** y crear el socket pasivo, para que escuche en cualquier IP, ya sea v4 o v6
@@ -82,8 +84,7 @@ int setupTCPServerSocket(char *address, short servicePort) {
 static void
 sigterm_handler(const int signal) {
     log(INFO, "signal %d, cleaning up and exiting", signal);
-    exit(1);// TODO: en vez de hacer exit. deberiamos llamar las cosas de limpieza.
-    // la otra opcioon es setear un bool para que el while salga 
+    keepRunning = false;
 }
 
 int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para el ip del server
@@ -99,10 +100,8 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
         add_user(args.users[i].name, args.users[i].pass);
         log(INFO, "User added: %s", args.users[i].name);
     }
-    log(INFO, "Users loaded successfully");
     
     metrics_init();
-    log(INFO, "Metrics initialized successfully");
 
     int servSock = setupTCPServerSocket(args.socks_addr, args.socks_port);
     if (servSock < 0) return 1;
@@ -117,11 +116,11 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
     signal(SIGINT,  sigterm_handler);
 
     if (selector_fd_set_nio(servSock) < 0) {
-        log(FATAL, "Could not set O_NONBLOCK on listening socket");
+        log(FATAL, "Could not set O_NONBLOCK on listening socket %d", servSock);
     }
 
     if (selector_fd_set_nio(monitoringSock) < 0) {
-        log(FATAL, "Could not set O_NONBLOCK on monitoring socket");
+        log(FATAL, "Could not set O_NONBLOCK on monitoring socket %d", monitoringSock);
         close(servSock);
         close(monitoringSock);
         return 1;
@@ -151,10 +150,10 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
     selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
     selector_register(selector, monitoringSock, &monitoring_listen_handler, OP_READ, NULL);
 
-    log(INFO, "SOCKS5 server listening on port %s", argv[1]);
-    log(INFO, "Monitoring server listening on port %s", argv[2]);
+    log(INFO, "SOCKS5 server listening on port %u", args.socks_port);
+    log(INFO, "Monitoring server listening on port %u", args.mng_port);
 
-    while (selector_select(selector) == SELECTOR_SUCCESS) {
+    while (keepRunning && selector_select(selector) == SELECTOR_SUCCESS) {
         ; 
     }
 

@@ -10,8 +10,6 @@ typedef struct {
     size_t bytes_received;
 } MonitoringMetrics;
 
-static MonitoringMetrics metrics;
-
 void metrics_init();
 
 void metrics_increment_connections();

@@ -1,6 +1,8 @@
 #include "monitoringMetrics.h"
 #include <string.h>
 
+static MonitoringMetrics metrics;
+
 void metrics_init() {
     memset(&metrics, 0, sizeof(MonitoringMetrics));
 }
