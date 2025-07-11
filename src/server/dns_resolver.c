@@ -29,7 +29,7 @@ int dns_solve_addr(const char *host, const char *service, struct addrinfo **out_
 
     // Devuelvo al llamador la lista de addrinfo
     *out_res = res;
-    log(DEBUG, "dns_solve_addr: %s:%s resuelto con éxito", host, service);
+    // log(DEBUG, "dns_solve_addr: %s:%s resuelto con éxito", host, service);
     return 0;
 }
 

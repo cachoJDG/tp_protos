@@ -17,33 +17,47 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .state = STM_INITIAL_READ, // https://datatracker.ietf.org/doc/html/rfc1928#section-3
         .on_arrival = stm_initial_read_arrival,
         .on_read_ready = stm_initial_read,
+        .on_write_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_INITIAL_WRITE,
         .on_write_ready = stm_initial_write,
+        .on_read_ready = error_redirect,
+        .on_block_ready = error_redirect,
     }, 
     {
         .state = STM_LOGIN_READ, // https://datatracker.ietf.org/doc/html/rfc1929
         .on_arrival = stm_login_read_arrival,
         .on_read_ready = stm_login_read,
+        .on_write_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_LOGIN_WRITE,
         .on_write_ready= stm_login_write,
+        .on_read_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_REQUEST_READ, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
         .on_arrival = stm_request_read_arrival,
         .on_read_ready = stm_request_read,
+        .on_write_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_REQUEST_WRITE, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
         .on_write_ready = stm_request_write,
+        .on_read_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_CONNECT_ATTEMPT, // https://datatracker.ietf.org/doc/html/rfc1928#section-4
         .on_arrival = stm_connect_attempt_arrival,
         .on_write_ready = stm_connect_attempt_write,
+        .on_read_ready = error_redirect,
+        .on_block_ready = error_redirect,
     },
     {
         .state = STM_CONNECTION_TRAFFIC, // se termino de establecer la conexion. y ahora se pasan los datos
@@ -51,10 +65,13 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = stm_connection_traffic_write,
         .on_read_ready = stm_connection_traffic_read,
         .on_departure = stm_connection_traffic_departure,
+        .on_block_ready = error_redirect, // TODO: Creo que este estado deberíamos manejarlo
     },
     {
         .state = STM_DNS_DONE, 
         .on_block_ready = stm_dns_done,
+        // .on_read_ready = error_redirect,
+        // .on_write_ready = error_redirect,
     },
     {
         .state = STM_DONE, 
@@ -69,7 +86,7 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
 static int acceptTCPConnection(int servSock) {
 	struct sockaddr_storage clntAddr;
 	socklen_t clntAddrLen = sizeof(clntAddr);
-    static char addrBuffer[MAX_ADDR_BUFFER];
+    char addrBuffer[MAX_ADDR_BUFFER] = {0};
 
 	// Wait for a client to connect
 	int clntSock = accept(servSock, (struct sockaddr *) &clntAddr, &clntAddrLen);
@@ -374,4 +391,11 @@ void client_handler_close(struct selector_key *key) {
     free(key->data);
     key->data = NULL; // Evitar que se intente liberar de nuevo
     closeSocketWithMetrics(key->fd); // Cerrar el socket del cliente
+}
+
+StateSocksv5 error_redirect(struct selector_key *key) {
+    ClientData *clientData = key->data;
+    log(ERROR, "error_redirect called for socket %d, state=%d", key->fd, clientData->stm.current->state);
+    // exit(0);
+    return STM_ERROR;
 }

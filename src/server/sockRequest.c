@@ -42,11 +42,11 @@ void *dns_thread_func(void *arg) {
                 addr = &((struct sockaddr_in6 *)p->ai_addr)->sin6_addr;
             }
             inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
-            log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
+            // log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
         }
 
     } else {
-        log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
+        // log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
         job->result = NULL;
     }
     selector_notify_block(job->selector, job->client_fd);
@@ -142,6 +142,9 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             if (pthread_create(&tid, NULL, dns_thread_func, job) != 0) {
                 log(ERROR, "pthread_create: %s", strerror(errno));
                 free(job);
+                return STM_ERROR;
+            }
+            if (selector_set_interest_key(key, OP_NOOP) != SELECTOR_SUCCESS) {
                 return STM_ERROR;
             }
             pthread_detach(tid);

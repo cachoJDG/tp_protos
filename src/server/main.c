@@ -81,24 +81,23 @@ int setupTCPServerSocket(char *address, short servicePort) {
 	return servSock;
 }
 
-static void
-sigterm_handler(const int signal) {
+static void sigterm_handler(const int signal) {
     log(INFO, "signal %d, cleaning up and exiting", signal);
     keepRunning = false;
 }
 
 int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para el ip del server
+    signal(SIGTERM, sigterm_handler);
+    signal(SIGINT,  sigterm_handler);
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     close(STDIN_FILENO);
 
     struct socks5args args = {0};
     parse_args(argc, argv, &args);
-    // TODO: que es args.disectors_enabled ???
 
     for(int i = 0; i < args.users_n; i++) {
         add_user(args.users[i].name, args.users[i].pass);
-        log(INFO, "User added: %s", args.users[i].name);
     }
     
     metrics_init();
@@ -112,11 +111,9 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
         return 1;
     }
 
-    signal(SIGTERM, sigterm_handler);
-    signal(SIGINT,  sigterm_handler);
-
     if (selector_fd_set_nio(servSock) < 0) {
         log(FATAL, "Could not set O_NONBLOCK on listening socket %d", servSock);
+        return 1;
     }
 
     if (selector_fd_set_nio(monitoringSock) < 0) {
