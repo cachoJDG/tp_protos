@@ -18,10 +18,12 @@
 #include <pthread.h>
 #include "../buffer.h"
 
-#define BUFSIZE (4096)
+#define BUFSIZE (32768) // 32KB
 #define MAX_ADDR_BUFFER (64)
-#define USERNAME_MAX_LENGTH (256)
+#define NAME_MAX_LENGTH (256)
 #define SOCKS_LOGIN_VERSION (1)
+#define NAME_MAX_LENGTH (256)
+
 
 typedef enum AuthMethod {
     AUTH_NONE = 0x00,
@@ -43,9 +45,9 @@ typedef struct socks5_login_parserinfo {
     // -------- Datos parseados --------
     uint8_t loginVersion;
     uint8_t usernameLength;
-    char username[USERNAME_MAX_LENGTH];
+    char username[NAME_MAX_LENGTH];
     uint8_t passwordLength;
-    char password[USERNAME_MAX_LENGTH];
+    char password[NAME_MAX_LENGTH];
     // -------- Datos internos del parser --------
     uint8_t substate;
 } socks5_login_parserinfo;
@@ -60,7 +62,7 @@ typedef struct socks5_request_parserinfo {
     uint32_t ipv4;
     uint8_t ipv6[16];
     uint8_t domainNameLength; // Longitud del nombre de dominio
-    char domainName[BUFSIZE];
+    char domainName[NAME_MAX_LENGTH];
     uint16_t port; // Puerto del destino
     // -------- Datos internos del parser --------
     uint8_t substate;
@@ -77,10 +79,13 @@ typedef struct ClientData {
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
     uint8_t remoteBufferData[BUFSIZE];
     char isLoggedIn;
-    //char username[USERNAME_MAX_LENGTH];
-    //char password[USERNAME_MAX_LENGTH];
+    //char username[NAME_MAX_LENGTH];
+    //char password[NAME_MAX_LENGTH];
     // parsing
     AuthMethod authMethod;
+
+    int client_closed; // Indica si el cliente ha cerrado la conexión
+    int outgoing_closed; // Indica si el socket remoto ha cerrado la conexión
 
     socks5_initial_parserinfo initialParserInfo;
     socks5_login_parserinfo loginParserInfo;

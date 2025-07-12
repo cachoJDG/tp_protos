@@ -33,19 +33,30 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&clientData->outgoing_buffer, &readable);
+
+    errno = 0;
     ssize_t bytesWritten = sendBytesWithMetrics(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
+        log(INFO, "errno: %s", strerror(errno));
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            log(DEBUG, "Socket %d would block, not writing", key->fd);
+            // No cambio nada (ni si quiera el interest)
+            errno = 0;
+            return STM_CONNECTION_TRAFFIC;
+        }
         log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
+        errno = 0;
         return STM_DONE;
     }
+
     buffer_read_adv(&clientData->outgoing_buffer, bytesWritten);
-    if (buffer_can_read(&clientData->outgoing_buffer)) {
+    if (buffer_can_read(&clientData->outgoing_buffer) && !clientData->client_closed) {
         selector_set_interest(key->s, clientData->client_fd, OP_READ | OP_WRITE);
+    } else if (clientData->client_closed) {
+        selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
     } else {
         selector_set_interest(key->s, clientData->client_fd, OP_READ);
     }
-
-    log(DEBUG, "Write handler called for socket %d [CLIENT]", key->fd);
     return STM_CONNECTION_TRAFFIC;
 }
 
@@ -55,29 +66,33 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     size_t available;
     uint8_t *write_ptr = buffer_write_ptr(&clientData->client_buffer, &available);
 
+    errno = 0;
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         if (bytesRead == 0) {
-            log(INFO, "Connection closed by peer on socket %d", key->fd);
-        } else {
-            log(ERROR, "Error reading from socket %d: %s", key->fd, strerror(errno));
+            log(INFO, "Connection closed by peer [CLIENT] on socket %d. Operating in write mode", key->fd);
+            clientData->client_closed = 1;
+            selector_set_interest(key->s, key->fd, OP_WRITE);
+            return STM_CONNECTION_TRAFFIC; // No se cierra el socket, solo se marca como cerrado
         }
-        
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            log(DEBUG, "Socket %d would block, not reading", key->fd);
+            // No cambio nada (ni si quiera el interest)
+            errno = 0;
+            return STM_CONNECTION_TRAFFIC;
+        }
+        log(ERROR, "Error reading from socket %d: %s", key->fd, strerror(errno));
+        errno = 0;
         return STM_DONE;
     }
 
     buffer_write_adv(&clientData->client_buffer, bytesRead);
-    if (buffer_can_read(&clientData->client_buffer)) {
-        selector_set_interest(key->s, clientData->outgoing_fd, OP_READ | OP_WRITE);
-    } else {
-        selector_set_interest(key->s, clientData->outgoing_fd, OP_READ);
-    }
-    log(DEBUG, "Received %zd bytes from socket %d [CLIENT]", bytesRead, key->fd);
+
+    selector_set_interest(key->s, clientData->outgoing_fd, OP_READ | OP_WRITE);
     return STM_CONNECTION_TRAFFIC;
 }
 
 void stm_connection_traffic_departure(const unsigned state, struct selector_key *key) {
-    log(DEBUG, "stm_connection_traffic_departure called for socket %d", key->fd);
     ClientData *clientData = key->data;
         
     // Close outgoing socket
@@ -93,6 +108,17 @@ void proxy_handler_read(struct selector_key *key) {
 
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
+        log(INFO, "errno: %s", strerror(errno));
+        if (bytesRead == 0) {
+            log(INFO, "Connection closed by peer [SERVER] on socket %d", key->fd);
+            selector_unregister_fd(key->s, key->fd);
+            return;
+        }
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            log(DEBUG, "Socket %d would block, not reading", key->fd);
+            // No cambio nada (ni si quiera el interest)
+            return;
+        }
         log(ERROR, "Error reading from socket %d: %zd", key->fd, bytesRead);
         selector_unregister_fd(key->s, key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
@@ -100,13 +126,7 @@ void proxy_handler_read(struct selector_key *key) {
     }
 
     buffer_write_adv(&proxyData->outgoing_buffer, bytesRead);
-    if (buffer_can_read(&proxyData->outgoing_buffer)) {
-        selector_set_interest(key->s, proxyData->client_fd, OP_READ | OP_WRITE);
-    } else {
-        selector_set_interest(key->s, proxyData->client_fd, OP_READ);
-    }
-
-    log(DEBUG, "Received %zd bytes from socket %d [REMOTE]", bytesRead, key->fd);
+    selector_set_interest(key->s, proxyData->client_fd, OP_READ | OP_WRITE);
 }
 
 // BUFFER REMOTO --> SOCKET CLIENTE
@@ -116,7 +136,13 @@ void proxy_handler_write(struct selector_key *key) {
     uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
     ssize_t bytesWritten = sendBytesWithMetrics(key->fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
-        log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
+        log(INFO, "errno: %s", strerror(errno));
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            log(DEBUG, "Socket %d would block, not writing", key->fd);
+            // No cambio nada (ni si quiera el interest)
+            return;
+        }
+        log(ERROR, "[SERVER] Error writing to socket %d: %zd", key->fd, bytesWritten);
         selector_unregister_fd(key->s, key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
 
@@ -129,7 +155,6 @@ void proxy_handler_write(struct selector_key *key) {
         selector_set_interest(key->s, proxyData->outgoing_fd, OP_READ);
     }
 
-    log(DEBUG, "Write handler called for socket %d [REMOTE]", key->fd);
     return;
 }
 

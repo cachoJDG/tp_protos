@@ -280,10 +280,10 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     }
 
     // 3. Acciones
-    char username[USERNAME_MAX_LENGTH] = {0};
+    char username[NAME_MAX_LENGTH] = {0};
     memcpy(username, parserInfo->username, parserInfo->usernameLength);
     username[parserInfo->usernameLength] = '\0';
-    char password[USERNAME_MAX_LENGTH] = {0};
+    char password[NAME_MAX_LENGTH] = {0};
     memcpy(password, parserInfo->password, parserInfo->passwordLength);
     password[parserInfo->passwordLength] = '\0';
     uint8_t loginVersion = parserInfo->loginVersion;
