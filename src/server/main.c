@@ -149,11 +149,11 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
 
     log(INFO, "SOCKS5 server listening on port %u", args.socks_port);
     log(INFO, "Monitoring server listening on port %u", args.mng_port);
-
-    while (keepRunning && selector_select(selector) == SELECTOR_SUCCESS) {
+    selector_status sel_status = SELECTOR_SUCCESS;
+    while (keepRunning && (sel_status = selector_select(selector)) == SELECTOR_SUCCESS) {
         ; 
     }
-
+    log(INFO, "closing server with selector status=%d", sel_status);
     selector_destroy(selector);
     selector_close();
     if(servSock >= 0) {

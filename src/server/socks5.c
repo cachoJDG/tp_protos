@@ -346,8 +346,9 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
-    // ClientData *clientData = key->data; 
+    ClientData *clientData = key->data; 
     selector_set_interest_key(key, OP_NOOP);
+    log(ERROR, "error called for socket %d, state=%d", key->fd, clientData->stm.current->state);
 }
 
 void stm_done_arrival(unsigned state, struct selector_key *key) {
@@ -396,6 +397,6 @@ void client_handler_close(struct selector_key *key) {
 StateSocksv5 error_redirect(struct selector_key *key) {
     ClientData *clientData = key->data;
     log(ERROR, "error_redirect called for socket %d, state=%d", key->fd, clientData->stm.current->state);
-    // exit(0);
+    
     return STM_ERROR;
 }

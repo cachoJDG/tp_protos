@@ -20,6 +20,7 @@
         "args.h": "c",
         "stdint.h": "c",
         "types.h": "c",
-        "initialparser.h": "c"
+        "initialparser.h": "c",
+        "sockutils.h": "c"
     }
 }

@@ -390,14 +390,17 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
-
+    
     // sendBytesWithMetrics a server reply: SUCCESS, then sendBytesWithMetrics the address to which our socket is bound.
-    if (sendBytesWithMetrics(key->fd, "\x05\x00\x00", 3, 0) <= 0)
+    if (sendBytesWithMetrics(key->fd, "\x05\x00\x00", 3, 0) <= 0) {
+        log(ERROR, "connecting to remote: send failed %d", key->fd);
         return STM_ERROR;
+    }
 
     switch (boundAddress.ss_family) {
         case AF_INET:
             // sendBytesWithMetrics: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
+            log(INFO, "sending %d", key->fd);
             if (sendBytesWithMetrics(key->fd, "\x01", 1, 0) <= 0)
                 return STM_ERROR;
             if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) <= 0)
