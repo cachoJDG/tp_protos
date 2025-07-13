@@ -69,6 +69,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
 
     if (bytesRead <= 0) {
         log(ERROR, "stm machine inconsistency: read handler called without bytes to read %ld", bytesRead);
+        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
@@ -82,6 +83,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             return STM_REQUEST_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
             // log(ERROR, "Error parsing request data");
+            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
     }
 
@@ -131,7 +133,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             DnsJob *job = calloc(1, sizeof(*job)); // este se libera en dns_thread_func
             if (!job) {
                 log(ERROR, "malloc: %s", strerror(errno));
-                return STM_ERROR;
+                break;
             }
             uint8_t domainNameSize = parserInfo->domainNameLength;
             memcpy(job->host, parserInfo->domainName, domainNameSize);
@@ -199,6 +201,7 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         }
         if (clientData->outgoing_fd < 0) {
             log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
+            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
         }
         selector_fd_set_nio(clientData->outgoing_fd);
@@ -251,42 +254,55 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         printSocketAddress((struct sockaddr*)&boundAddress, addrBuffer);
         log(INFO, "Remote socket bound at %s", addrBuffer);
     } else {
-        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
+        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x04\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
     
     // sendBytesWithMetrics a server reply: SUCCESS, then sendBytesWithMetrics the address to which our socket is bound.
     if (sendBytesWithMetrics(key->fd, "\x05\x00\x00", 3, 0) <= 0) {
         log(ERROR, "connecting to remote: send failed %d", key->fd);
+        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
     switch (boundAddress.ss_family) {
         case AF_INET:
             // sendBytesWithMetrics: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
-            log(INFO, "sending %d", key->fd);
-            if (sendBytesWithMetrics(key->fd, "\x01", 1, 0) <= 0)
+            if (sendBytesWithMetrics(key->fd, "\x01", 1, 0) <= 0) {
+                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
                 return STM_ERROR;
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) <= 0)
+            }
+            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) <= 0) {
+                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
                 return STM_ERROR;
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) <= 0)
+            }
+            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) <= 0) {
+                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
                 return STM_ERROR;
+            }
             break;
 
         case AF_INET6:
             // sendBytesWithMetrics: '\x04' (ATYP identifier for IPv6) followed by the IP and PORT.
-            if (sendBytesWithMetrics(key->fd, "\x04", 1, 0) <= 0)
+            if (sendBytesWithMetrics(key->fd, "\x04", 1, 0) <= 0) {
+                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
                 return STM_ERROR;
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) <= 0)
+            }
+            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) <= 0) {
+                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
                 return STM_ERROR;
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) <= 0)
+            }
+            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) <= 0) {
+                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
                 return STM_ERROR;
+            }
             break;
 
         default:
             // We don't know the address type? sendBytesWithMetrics IPv4 0.0.0.0:0.
-            if (sendBytesWithMetrics(key->fd, "\x01\x00\x00\x00\x00\x00\x00", 7, 0) <= 0)
+            if (sendBytesWithMetrics(key->fd, "\x01\x00\x00\x01\x00\x00\x00", 7, 0) <= 0) {
                 return STM_ERROR;
+            }
             break;
     }
     clientData->outgoing_fd = sock;

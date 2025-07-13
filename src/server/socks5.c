@@ -105,6 +105,9 @@ static int acceptTCPConnection(int servSock) {
 
 void handle_read_passive(struct selector_key *key) {
     int clientSocket = acceptTCPConnection(key->fd);
+    if(clientSocket == -1) {
+        return;
+    }
 
     ClientData *clientData = calloc(1, sizeof(ClientData)); 
     
@@ -163,6 +166,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
+        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
@@ -174,6 +178,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
+            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
     }
 
@@ -225,6 +230,7 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
 
     if(bytesWritten <= 0) {
+        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
@@ -239,9 +245,10 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     switch(clientData->authMethod) {
         case AUTH_USER_PASSWORD:
             return STM_LOGIN_READ;
-            case AUTH_NONE:
+        case AUTH_NONE:
             return STM_REQUEST_READ;
         default:
+            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
     }
     selector_set_interest_key(key, OP_NOOP);
@@ -263,6 +270,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
+        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
@@ -274,6 +282,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_LOGIN_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
+            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             return STM_ERROR;
     }
 
@@ -288,6 +297,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
     if(loginVersion != SOCKS_LOGIN_VERSION) {
         log(ERROR, "Invalid login version %d", loginVersion);
+        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
@@ -324,6 +334,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     if(bytesWritten <= 0) {
         // TODO: En este tipo de situaciones post-send/recv es importante entender bien cómo funciona errno en el sistema de sockets no bloqueantes
         log(ERROR, "Error writing login response to client %ld", bytesWritten);
+        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
         return STM_ERROR;
     }
 
@@ -340,6 +351,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     }
     selector_set_interest_key(key, OP_NOOP);
     log(INFO, "Log in failed %d", clientData->authMethod);
+    sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
     return STM_ERROR;
 }
 
