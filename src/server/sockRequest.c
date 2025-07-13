@@ -230,7 +230,10 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         }
         if (clientData->outgoing_fd < 0) {
             log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
+            // TODO: hacer que este mensaje de error pase por el buffer
             sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
+            freeaddrinfo(clientData->connectAddresses);
+            clientData->connectAddresses = NULL;
             return STM_ERROR;
         }
         selector_fd_set_nio(clientData->outgoing_fd);
@@ -250,6 +253,11 @@ StateSocksv5 beginConnection(struct selector_key *key) {
     }
 
     sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
+
+    if (clientData->connectAddresses != NULL) {
+        freeaddrinfo(clientData->connectAddresses);
+        clientData->connectAddresses = NULL;
+    }
     return STM_ERROR;
 }
 
@@ -349,6 +357,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     }
     clientData->outgoing_fd = sock;
     freeaddrinfo(clientData->connectAddresses);
+    clientData->connectAddresses = NULL;
 
     selector_set_interest_key(key, OP_READ);
     return STM_CONNECTION_TRAFFIC;

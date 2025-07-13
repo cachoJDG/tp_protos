@@ -395,6 +395,10 @@ void client_handler_close(struct selector_key *key) {
     if(clientData->client_fd != -1) {
         close(clientData->client_fd);
     }
+    if (clientData->connectAddresses != NULL) {
+        freeaddrinfo(clientData->connectAddresses);
+        clientData->connectAddresses = NULL;
+    }
     free(key->data);
     key->data = NULL; // Evitar que se intente liberar de nuevo
     closeSocketWithMetrics(key->fd); // Cerrar el socket del cliente
