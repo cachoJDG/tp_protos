@@ -5,6 +5,12 @@ ssh -D 1080 jaliu@pampero.itba.edu.ar
 wsl sudo tcpdump -i lo -U -n -w - 'tcp port 1024' | "D:\Programs\Wireshark\Wireshark.exe" -k -i -
 
 curl -x socks5h://john_doe:1234@127.0.0.1:1024 example.org
+curl -x socks5h://john_doe:1234@127.0.0.1:1024 -H "Host: example.org" http://23.215.0.133
+curl -x socks5h://john_doe:1234@127.0.0.1:1024 http://[2600:1406:bc00:17::6007:810d]/ -H "Host: example.org"
+curl http://[2600:1406:bc00:17::6007:810d]/ -H "Host: example.org"
+
+dig -t AAAA example.org +short
+# 2600:1408:ec00:36::1736:7f2f
 
 .\chrome.exe --proxy-server=socks5://127.0.0.1:1024
 

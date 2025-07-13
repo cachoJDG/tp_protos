@@ -138,7 +138,6 @@ ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toRead) {
     if (bytesRead > 0) {
         buffer_write_adv(buffer, bytesRead);
     }
-    log(DEBUG, "bytesRead=%zd, toRead=%zd", bytesRead, toRead);
     return bytesRead;
 }
 
@@ -151,7 +150,6 @@ ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toWrite) {
     if (bytesWritten > 0) {
         buffer_read_adv(buffer, bytesWritten);
     }
-    log(DEBUG, "bytesWritten=%zd, toWrite=%zd", bytesWritten, toWrite);
     return bytesWritten;
 }
 
@@ -292,7 +290,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
         log(ERROR, "Invalid login version %d", loginVersion);
         return STM_ERROR;
     }
-    log(DEBUG, "username[%d]='%s' password[%d]='%s'", parserInfo->usernameLength, username, parserInfo->passwordLength, password);
+
     if(validate_login(username, password)) {
         log(INFO, "Login successful for user '%s'", username);
         clientData->isLoggedIn = 1;
@@ -381,10 +379,6 @@ void client_handler_block(struct selector_key *key) {
     }
 }
 void client_handler_close(struct selector_key *key) {
-
-    // enum StateSocksv5 state = stm_handler_close(&clientData->stm, key); // este no retorna xd
-    // TODO: avoid double free
-    // selector_set_interest_key(key, OP_NOOP);
     ClientData *clientData = key->data;
     if(clientData->client_fd != -1) {
         close(clientData->client_fd);

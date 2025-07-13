@@ -35,12 +35,12 @@ int setupTCPServerSocket(char *address, short servicePort) {
 	addrCriteria.ai_socktype = SOCK_STREAM;         // Only stream sockets
 	addrCriteria.ai_protocol = IPPROTO_TCP;         // Only TCP protocol
 
-    // TODO: re vago esta solucion. ver si se puede hacer sin getaddrinfo
+
     char service[6] = {0}; // max 5 digits + null terminator
     snprintf(service, sizeof(service), "%hu", servicePort);
 
 	struct addrinfo *servAddr; 			// List of server addresses
-	int rtnVal = getaddrinfo(NULL, service, &addrCriteria, &servAddr);
+	int rtnVal = getaddrinfo(address, service, &addrCriteria, &servAddr);
 	if (rtnVal != 0) {
 		log(FATAL, "getaddrinfo() failed %s", gai_strerror(rtnVal));
 		return -1;
@@ -86,7 +86,7 @@ static void sigterm_handler(const int signal) {
     keepRunning = false;
 }
 
-int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para el ip del server
+int main(int argc, char *argv[]) {
     signal(SIGTERM, sigterm_handler);
     signal(SIGINT,  sigterm_handler);
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -113,6 +113,8 @@ int main(int argc, char *argv[]) { // TODO: ver si hay que implementar IPv6 para
 
     if (selector_fd_set_nio(servSock) < 0) {
         log(FATAL, "Could not set O_NONBLOCK on listening socket %d", servSock);
+        close(servSock);
+        close(monitoringSock);
         return 1;
     }
 

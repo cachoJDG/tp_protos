@@ -100,7 +100,7 @@ parser_ret login_parse(struct buffer *buffer, socks5_login_parserinfo* parserInf
         log(FATAL, "Received more bytes than expected in login read. FIX NEEDED %ld", *toRead);
         return PARSER_ERROR; // More bytes read than expected
     }
-    log(DEBUG, "login_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);
+    // log(DEBUG, "login_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);
 
     // Call the appropriate substate parser
     return loginParserSubstates[parserInfo->substate](buffer, parserInfo, toRead);
@@ -130,7 +130,7 @@ parser_ret req_command_addrtype(struct buffer *buffer, socks5_request_parserinfo
     parserInfo->command = buffer_read(buffer);
     parserInfo->reserved = buffer_read(buffer); // Reserved byte, should be 0x00
     parserInfo->addressType = buffer_read(buffer);
-    logParserInfo(parserInfo);
+    // logParserInfo(parserInfo);
     switch(parserInfo->addressType) {
         case SOCKSV5_ADDR_TYPE_IPV4:
             *toRead = sizeof(uint32_t); // IPv4 address (4 bytes)
@@ -153,7 +153,7 @@ parser_ret req_command_addrtype(struct buffer *buffer, socks5_request_parserinfo
 
 parser_ret req_ipv4(struct buffer *buffer, socks5_request_parserinfo* parserInfo, ssize_t *toRead) {
     // TODO: terminar esto después de PAW
-    uint32_t rawAddress;
+    struct in_addr rawAddress;
     buffer_read_bytes(buffer, (uint8_t*)&rawAddress, sizeof(rawAddress));
     // parserInfo->ipv4 = ntohl(rawAddress);
     parserInfo->ipv4 = rawAddress; // Store the raw address directly
@@ -194,7 +194,7 @@ parser_ret req_port(struct buffer *buffer, socks5_request_parserinfo* parserInfo
     buffer_read_bytes(buffer, (uint8_t *)&rawPort, sizeof(rawPort));
     parserInfo->port = ntohs(rawPort);  // Convert from network to host byte order
     *toRead = 0; // No more bytes to read
-    logParserInfo(parserInfo);
+    // logParserInfo(parserInfo);
     return PARSER_OK;  // Parsing complete
 }
 
@@ -222,7 +222,7 @@ parser_ret request_parse(struct buffer *buffer, socks5_request_parserinfo* parse
         log(FATAL, "Received more bytes than expected in request read. FIX NEEDED %ld", *toRead);
         return PARSER_ERROR; // More bytes read than expected
     }
-    log(DEBUG, "request_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);
+    // log(DEBUG, "request_parse: substate=%d, toRead=%zd", parserInfo->substate, *toRead);
 
     // Call the appropriate substate parser
     return requestParserSubstates[parserInfo->substate](buffer, parserInfo, toRead);

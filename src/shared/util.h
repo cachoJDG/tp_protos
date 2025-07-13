@@ -59,11 +59,15 @@ typedef struct socks5_request_parserinfo {
     uint8_t reserved; // Ignorar
     uint8_t addressType; // SOCKSV5_ADDR_TYPE_IPV4, SOCKSV5_ADDR_TYPE_DOMAIN_NAME, SOCKSV5_ADDR_TYPE_IPV6
     uint8_t wtf[4];
-    uint32_t ipv4;
-    uint8_t ipv6[16];
+    struct in_addr ipv4;
+    struct in6_addr ipv6;
     uint8_t domainNameLength; // Longitud del nombre de dominio
     char domainName[NAME_MAX_LENGTH];
     uint16_t port; // Puerto del destino
+    union {
+        struct sockaddr_in sockAddress; 
+        struct sockaddr_in6 sockAddress6; 
+    };
     // -------- Datos internos del parser --------
     uint8_t substate;
 } socks5_request_parserinfo;
@@ -79,17 +83,15 @@ typedef struct ClientData {
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
     uint8_t remoteBufferData[BUFSIZE];
     char isLoggedIn;
-    //char username[NAME_MAX_LENGTH];
-    //char password[NAME_MAX_LENGTH];
-    // parsing
     AuthMethod authMethod;
 
     int client_closed; // Indica si el cliente ha cerrado la conexión
     int outgoing_closed; // Indica si el socket remoto ha cerrado la conexión
-
-    socks5_initial_parserinfo initialParserInfo;
-    socks5_login_parserinfo loginParserInfo;
-    socks5_request_parserinfo requestParser;
+    union {
+        socks5_initial_parserinfo initialParserInfo;
+        socks5_login_parserinfo loginParserInfo;
+        socks5_request_parserinfo requestParser;
+    };
 
     ssize_t toWrite;
     ssize_t toRead;
