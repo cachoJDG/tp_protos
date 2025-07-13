@@ -28,7 +28,7 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, key->data); // Comparto el contexto
 }
 
-// BUFFER CLIENTE --> SOCKET REMOTO
+// BUFFER REMOTO --> SOCKET CLIENTE
 unsigned stm_connection_traffic_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     size_t readable;
@@ -38,26 +38,40 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     ssize_t bytesWritten = sendBytesWithMetrics(clientData->client_fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(INFO, "errno: %s", strerror(errno));
+        log(INFO, "readable: %zu", readable);
         if (bytesWritten == 0) {
-            log(ERROR, "[CLIENT] This should NOT happen and I have no idea what this means. Socket %d", clientData->outgoing_fd);
+            log(ERROR, "[CLIENT] Error writing to socket %d: Unknown Error", clientData->client_fd);
             return STM_DONE; // No se cierra el socket, solo se marca como cerrado
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            log(DEBUG, "Socket %d would block, not writing", clientData->client_fd);
+            // log(DEBUG, "Socket %d would block, not writing", clientData->client_fd);
             // No cambio nada (ni si quiera el interest)
             errno = 0;
             return STM_CONNECTION_TRAFFIC;
         }
-        log(ERROR, "[CLIENT] Error writing to socket %d: %zd", clientData->client_fd, bytesWritten);
+        log(ERROR, "[CLIENT] Error writing to socket %d: %s", clientData->client_fd, strerror(errno));
         errno = 0;
         return STM_DONE;
     }
 
     buffer_read_adv(&clientData->outgoing_buffer, bytesWritten);
+
+    if (!buffer_can_read(&clientData->outgoing_buffer) && clientData->outgoing_closed) {
+        // Si no hay datos para escribir y el socket remoto está cerrado, dejo de escuchar
+        selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
+        log(INFO, "No more data to write to client %d, closing connection", clientData->client_fd);
+        return STM_DONE;
+    }
+
+
     if (buffer_can_read(&clientData->outgoing_buffer) && !clientData->client_closed) {
         selector_set_interest(key->s, clientData->client_fd, OP_READ | OP_WRITE);
-    } else if (clientData->client_closed) {
+
+    } else if (buffer_can_read(&clientData->outgoing_buffer) && (clientData->client_closed || clientData->outgoing_closed)) {
         selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
+
+    } else if (!buffer_can_read(&clientData->outgoing_buffer) && clientData->client_closed) {
+        selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
     } else {
         selector_set_interest(key->s, clientData->client_fd, OP_READ);
     }
@@ -75,17 +89,27 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     if (bytesRead <= 0) {
         if (errno == 0 && bytesRead == 0) {
             log(INFO, "Connection closed by peer [CLIENT] on socket %d. Operating in write mode", key->fd);
+            // Freno:
+            // 1. SOCKET CLIENTE --> BUFFER CLIENTE
+            // Dejo:
+            // 1. BUFFER CLIENTE --> SOCKET REMOTO [Si hay para escribir]
+            // 2. SOCKET REMOTO --> BUFFER REMOTO
+            // 3. BUFFER REMOTO --> SOCKET CLIENTE
             clientData->client_closed = 1;
-            selector_set_interest(key->s, key->fd, OP_WRITE);
-            return STM_CONNECTION_TRAFFIC; // No se cierra el socket, solo se marca como cerrado
+            if (buffer_can_read(&clientData->outgoing_buffer)) {
+                selector_set_interest(key->s, key->fd, OP_WRITE);
+            } else {
+                selector_set_interest(key->s, key->fd, OP_NOOP);
+            }
+            return STM_CONNECTION_TRAFFIC;
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            log(DEBUG, "Socket %d would block, not reading", key->fd);
+            // log(DEBUG, "Socket %d would block, not reading", key->fd);
             // No cambio nada (ni si quiera el interest)
             errno = 0;
             return STM_CONNECTION_TRAFFIC;
         }
-        log(ERROR, "Error reading from socket %d: %s", key->fd, strerror(errno));
+        log(ERROR, "[CLIENT] Error reading from socket %d: %s", key->fd, strerror(errno));
         errno = 0;
         return STM_DONE;
     }
@@ -117,21 +141,37 @@ void proxy_handler_read(struct selector_key *key) {
         log(INFO, "errno: %s", strerror(errno));
         if (errno == 0 && bytesRead == 0) {
             log(INFO, "Connection closed by peer [SERVER] on socket %d", key->fd);
-            selector_set_interest(key->s, proxyData->outgoing_fd, OP_WRITE);
+            // Freno:
+            // 1. SOCKET CLIENTE --> BUFFER CLIENTE
+            // 2. BUFFER CLIENTE --> SOCKET REMOTO
+            // 3. SOCKET REMOTO --> BUFFER REMOTO
+            // Dejo:
+            // 1. BUFFER REMOTO --> SOCKET CLIENTE [Si hay para escribir]
+            // TODO: cerrar conexión si no hay nada para escribir (debería agregar un flag de server_closed)
+            if (buffer_can_read(&proxyData->outgoing_buffer)) {
+               selector_set_interest(key->s, proxyData->client_fd, OP_WRITE);
+            } else {
+                selector_set_interest(key->s, proxyData->client_fd, OP_NOOP);
+            }
+            selector_set_interest(key->s, proxyData->outgoing_fd, OP_NOOP);
+            proxyData->outgoing_closed = 1; // Indica que el socket remoto se cerró
             return;
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            log(DEBUG, "Socket %d would block, not reading", key->fd);
+            // log(DEBUG, "Socket %d would block, not reading", key->fd);
             // No cambio nada (ni si quiera el interest)
             return;
         }
-        log(ERROR, "Error reading from socket %d: %zd", key->fd, bytesRead);
+        log(ERROR, "[SERVER] Error reading from socket %d: %s", key->fd, strerror(errno));
         selector_unregister_fd(key->s, key->fd);
         // TODO: avisarle al cliente que se cerró la conexión
         return;
     }
 
     buffer_write_adv(&proxyData->outgoing_buffer, bytesRead);
+    if (proxyData->client_closed) {
+        selector_set_interest(key->s, proxyData->client_fd, OP_WRITE);
+    }
     selector_set_interest(key->s, proxyData->client_fd, OP_READ | OP_WRITE);
 
     unsigned state = stm_connection_traffic_write(key); // Ahorra un Select
@@ -140,7 +180,7 @@ void proxy_handler_read(struct selector_key *key) {
     }
 }
 
-// BUFFER REMOTO --> SOCKET CLIENTE
+// BUFFER CLIENTE --> SOCKET REMOTO
 // Ojo: NO USAR key->fd, para no asumir qué socket es
 void proxy_handler_write(struct selector_key *key) {
     ClientData *proxyData = key->data;
@@ -149,21 +189,24 @@ void proxy_handler_write(struct selector_key *key) {
     ssize_t bytesWritten = sendBytesWithMetrics(proxyData->outgoing_fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(INFO, "errno: %s", strerror(errno));
+        log(INFO, "readable: %zu", readable);
         if (errno == 0 && bytesWritten == 0) {
-            log(ERROR, "[SERVER] This should NOT happen and I have no idea what this means. Socket %d", proxyData->outgoing_fd);
+            log(ERROR, "[SERVER] Error writing to socket %d: Unknown Error", proxyData->outgoing_fd);
         }
         else if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            log(DEBUG, "Socket %d would block, not writing", proxyData->outgoing_fd);
+            // log(DEBUG, "Socket %d would block, not writing", proxyData->outgoing_fd);
             // No cambio nada (ni si quiera el interest)
             return;
         }
-        log(ERROR, "[SERVER] Error writing to socket %d: %zd", proxyData->outgoing_fd, bytesWritten);
+        log(ERROR, "[SERVER] Error writing to socket %d: %s", proxyData->outgoing_fd, strerror(errno));
         selector_unregister_fd(key->s, proxyData->outgoing_fd);
         // TODO: avisarle al cliente que se cerró la conexión
 
         return;
     }
     buffer_read_adv(&proxyData->client_buffer, bytesWritten);
+
+
     if (buffer_can_read(&proxyData->client_buffer)) {
         selector_set_interest(key->s, proxyData->outgoing_fd, OP_READ | OP_WRITE);
     } else {
@@ -186,3 +229,4 @@ void proxy_handler_close(struct selector_key *key) {
     closeSocketWithMetrics(key->fd);
 }
 
+// TODO: Arreglar error de readable: 0
