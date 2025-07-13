@@ -35,16 +35,20 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     uint8_t *read_ptr = buffer_read_ptr(&clientData->outgoing_buffer, &readable);
 
     errno = 0;
-    ssize_t bytesWritten = sendBytesWithMetrics(key->fd, read_ptr, readable, 0);
+    ssize_t bytesWritten = sendBytesWithMetrics(clientData->client_fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(INFO, "errno: %s", strerror(errno));
+        if (bytesWritten == 0) {
+            log(ERROR, "[CLIENT] This should NOT happen and I have no idea what this means. Socket %d", clientData->outgoing_fd);
+            return STM_DONE; // No se cierra el socket, solo se marca como cerrado
+        }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            log(DEBUG, "Socket %d would block, not writing", key->fd);
+            log(DEBUG, "Socket %d would block, not writing", clientData->client_fd);
             // No cambio nada (ni si quiera el interest)
             errno = 0;
             return STM_CONNECTION_TRAFFIC;
         }
-        log(ERROR, "Error writing to socket %d: %zd", key->fd, bytesWritten);
+        log(ERROR, "[CLIENT] Error writing to socket %d: %zd", clientData->client_fd, bytesWritten);
         errno = 0;
         return STM_DONE;
     }
@@ -69,7 +73,7 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     errno = 0;
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
-        if (bytesRead == 0) {
+        if (errno == 0 && bytesRead == 0) {
             log(INFO, "Connection closed by peer [CLIENT] on socket %d. Operating in write mode", key->fd);
             clientData->client_closed = 1;
             selector_set_interest(key->s, key->fd, OP_WRITE);
@@ -89,6 +93,8 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     buffer_write_adv(&clientData->client_buffer, bytesRead);
 
     selector_set_interest(key->s, clientData->outgoing_fd, OP_READ | OP_WRITE);
+    // return stm_connection_traffic_write(key); // Ahorra un Select
+    proxy_handler_write(key); // Ahorra un Select
     return STM_CONNECTION_TRAFFIC;
 }
 
@@ -109,9 +115,9 @@ void proxy_handler_read(struct selector_key *key) {
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         log(INFO, "errno: %s", strerror(errno));
-        if (bytesRead == 0) {
+        if (errno == 0 && bytesRead == 0) {
             log(INFO, "Connection closed by peer [SERVER] on socket %d", key->fd);
-            selector_unregister_fd(key->s, key->fd);
+            selector_set_interest(key->s, proxyData->outgoing_fd, OP_WRITE);
             return;
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -127,23 +133,32 @@ void proxy_handler_read(struct selector_key *key) {
 
     buffer_write_adv(&proxyData->outgoing_buffer, bytesRead);
     selector_set_interest(key->s, proxyData->client_fd, OP_READ | OP_WRITE);
+
+    unsigned state = stm_connection_traffic_write(key); // Ahorra un Select
+    if (state == STM_ERROR || state == STM_DONE) {
+        selector_unregister_fd(key->s, proxyData->outgoing_fd);
+    }
 }
 
 // BUFFER REMOTO --> SOCKET CLIENTE
+// Ojo: NO USAR key->fd, para no asumir qué socket es
 void proxy_handler_write(struct selector_key *key) {
     ClientData *proxyData = key->data;
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
-    ssize_t bytesWritten = sendBytesWithMetrics(key->fd, read_ptr, readable, 0);
+    ssize_t bytesWritten = sendBytesWithMetrics(proxyData->outgoing_fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
         log(INFO, "errno: %s", strerror(errno));
-        if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            log(DEBUG, "Socket %d would block, not writing", key->fd);
+        if (errno == 0 && bytesWritten == 0) {
+            log(ERROR, "[SERVER] This should NOT happen and I have no idea what this means. Socket %d", proxyData->outgoing_fd);
+        }
+        else if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            log(DEBUG, "Socket %d would block, not writing", proxyData->outgoing_fd);
             // No cambio nada (ni si quiera el interest)
             return;
         }
-        log(ERROR, "[SERVER] Error writing to socket %d: %zd", key->fd, bytesWritten);
-        selector_unregister_fd(key->s, key->fd);
+        log(ERROR, "[SERVER] Error writing to socket %d: %zd", proxyData->outgoing_fd, bytesWritten);
+        selector_unregister_fd(key->s, proxyData->outgoing_fd);
         // TODO: avisarle al cliente que se cerró la conexión
 
         return;
