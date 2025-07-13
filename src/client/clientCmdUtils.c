@@ -12,6 +12,18 @@ int sendAddUserCommand(int clientSocket, char ** commands) {
     ans[0] = ADD_USER;
     int index = 1;
     int usernameLength = strlen(commands[2]);
+    int passwordLength = strlen(commands[3]);
+
+    if(usernameLength < 1 || usernameLength > UNAME_MAX_LENGTH) {
+        fprintf(stderr, "Client error: username length is invalid\n");
+        return -1;
+    }
+
+    if(passwordLength < 1 || passwordLength > PASSWORD_MAX_LENGTH) {
+        fprintf(stderr, "Client error: password length is invalid\n");
+        return -1;
+    }
+
     ans[index++] = usernameLength;
     memcpy(ans + index, commands[2], usernameLength);
     index += usernameLength;
@@ -30,6 +42,10 @@ int sendRemoveUserCommand(int clientSocket, char ** commands) {
     
     int index = 1;
     int usernameLength = strlen(commands[2]);
+    if(usernameLength < 1 || usernameLength > UNAME_MAX_LENGTH) {
+        fprintf(stderr, "Client error: username length is invalid\n");
+        return -1;
+    }
     ans[index++] = usernameLength;
     memcpy(ans + index, commands[2], usernameLength);
     index += usernameLength;
@@ -43,6 +59,18 @@ int sendChangePasswordCommand(int clientSocket, char ** commands) {
     
     int index = 1;
     int usernameLength = strlen(commands[2]);
+    int newPasswordLength = strlen(commands[3]);
+
+    if(usernameLength < 1 || usernameLength > UNAME_MAX_LENGTH) {
+        fprintf(stderr, "Client error: username length is invalid\n");
+        return -1;
+    }
+
+    if(newPasswordLength < 1 || newPasswordLength > PASSWORD_MAX_LENGTH) {
+        fprintf(stderr, "Client error: password length is invalid\n");
+        return -1;
+    }
+
     ans[index++] = usernameLength;
     memcpy(ans + index, commands[2], usernameLength);
     index += usernameLength;

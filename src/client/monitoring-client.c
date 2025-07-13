@@ -58,13 +58,28 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		sendListUsersCommand(clientSocket);
 	}
 	else if(parseAddUserCommand(commands, commandCount)) {
-		sendAddUserCommand(clientSocket ,commands);
+		if(sendAddUserCommand(clientSocket ,commands) == -1){
+			fprintf(stderr, "Error sending ADD USER command\n");
+			close(clientSocket);
+			free(commands);
+			exit(1);
+		}
 	}
 	else if(parseRemoveUserCommand(commands, commandCount)) {
-		sendRemoveUserCommand(clientSocket ,commands);
+		if(sendRemoveUserCommand(clientSocket ,commands) == -1){
+			fprintf(stderr, "Error sending REMOVE USER command\n");
+			close(clientSocket);
+			free(commands);
+			exit(1);
+		}
 	}
 	else if(parseChangePasswordCommand(commands, commandCount)) {
-		sendChangePasswordCommand(clientSocket ,commands);
+		if(sendChangePasswordCommand(clientSocket ,commands) == -1){
+			fprintf(stderr, "Error sending CHANGE PASSWORD command\n");
+			close(clientSocket);
+			free(commands);
+			exit(1);
+		}
 	}
 	else if(parseGetMetricsCommand(commands, commandCount)) {
 		sendGetMetricsCommand(clientSocket);
@@ -93,7 +108,7 @@ bool authClient(int clientSocket) {
 		return false;
 	}
 
-	if (strlen(clientName) > 255 || strlen(clientPassword) > 255) {
+	if (strlen(clientName) > UNAME_MAX_LENGTH || strlen(clientPassword) > PASSWORD_MAX_LENGTH) {
 		fprintf(stderr, "Client error: client name or password too long\n");
 		return false;
 	}
