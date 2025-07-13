@@ -166,18 +166,18 @@ void readServerResponse(int clientSocket) {
 
 int main(int argc, char *argv[]) {
 
-	if (argc < 4) {
-        fprintf(stderr, "Usage: %s <server> <port> <command> [args...]\n", argv[0]);
+	if (argc < 3) {
+        fprintf(stderr, "Usage: %s <port> <command> [args...]\n", argv[0]);
         fprintf(stderr, "Examples:\n");
-        fprintf(stderr, "  %s localhost 2020 LIST USERS\n", argv[0]);
-        fprintf(stderr, "  %s localhost 2020 ADD USER username password\n", argv[0]);
+        fprintf(stderr, "  %s 2020 LIST USERS\n", argv[0]);
+        fprintf(stderr, "  %s 2020 ADD USER username password\n", argv[0]);
         return 1;
     }
 	
-	char *server = argv[1];     // First arg: server name IP address 
+	char *server = LOCALHOST;     // First arg: server name IP address 
 
-	// Third arg server port
-	char *port = argv[2];
+	// Second arg server port
+	char *port = argv[1];
 
 	// Create a reliable, stream socket using TCP
 	int clientSocket = tcpClientSocket(server, port);
@@ -190,7 +190,7 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "user auth failed\n");
 		return 1;
 	}
-	int commandCount = argc - 3;
+	int commandCount = argc - 2;
     char **commands = malloc(commandCount * sizeof(char*));
     if (commands == NULL) {
         fprintf(stderr, "Memory allocation failed\n");
@@ -202,11 +202,11 @@ int main(int argc, char *argv[]) {
         commands[i] = NULL;
     }
 
-    for (int i = 3; i < argc; i++) {
-        commands[i - 3] = argv[i];
+    for (int i = 2; i < argc; i++) {
+        commands[i - 2] = argv[i];
     }
 
-	sendCommand(clientSocket ,commands, argc - 3);
+	sendCommand(clientSocket ,commands, argc - 2);
 
 	readServerResponse(clientSocket);
 
