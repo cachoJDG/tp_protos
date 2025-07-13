@@ -17,6 +17,17 @@ typedef enum AddressTypeSocksv5 {
     SOCKSV5_ADDR_TYPE_IPV6 = 0x04
 } AddressTypeSocksv5;
 
+typedef enum RequestStatus {
+    REQUEST_SUCCEED = 0x00,
+    REQUEST_GENERAL_FAILURE = 0x01,
+    REQUEST_CONNECTION_NOT_ALLOWED = 0x02,
+    REQUEST_NETWORK_UNREACHABLE = 0x03,
+    REQUEST_HOST_UNREACHABLE = 0x04,
+    REQUEST_CONNECTION_REFUSED = 0x05,
+    REQUEST_TTL_EXPIRED = 0x06,
+    REQUEST_COMMAND_NOT_SUPPORTED = 0x08,
+} RequestStatus;
+
 // todo pasar este struct y esta funcion al dns_resolver de alguna manera
 typedef struct {
     char host[MAX_ADDR_BUFFER];
@@ -52,6 +63,24 @@ void *dns_thread_func(void *arg) {
     selector_notify_block(job->selector, job->client_fd);
     free(job);
     return NULL;
+}
+
+static RequestStatus errnoToRequestStatus(int err) {
+    switch (err)
+    {
+    case 0:
+        return REQUEST_SUCCEED;
+    case ENETUNREACH:
+        return REQUEST_NETWORK_UNREACHABLE;
+    case EHOSTUNREACH:
+        return REQUEST_HOST_UNREACHABLE;
+    case ECONNREFUSED:
+        return REQUEST_CONNECTION_REFUSED;
+    case ETIMEDOUT:
+        return REQUEST_TTL_EXPIRED;
+    default:
+        return REQUEST_GENERAL_FAILURE;
+    }
 }
 
 void stm_request_read_arrival(unsigned state, struct selector_key *key) {
@@ -255,6 +284,19 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         log(INFO, "Remote socket bound at %s", addrBuffer);
     } else {
         sendBytesWithMetrics(key->fd, "\x05\x04\x00\x04\x00\x00\x00\x00\x00", 10, 0);
+        return STM_ERROR;
+    }
+    int err = 0;
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &(socklen_t){sizeof(int)})) {
+        log(ERROR, "err %d", key->fd);
+        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
+        return STM_ERROR;
+    }
+    if(err) {
+        log(ERROR, "errrrrrr %d err=%d", key->fd, err);
+        char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";
+        errorRes[1] = errnoToRequestStatus(err);
+        sendBytesWithMetrics(key->fd, errorRes, 10, 0);
         return STM_ERROR;
     }
     
