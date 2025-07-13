@@ -393,6 +393,7 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     }
     
     if (result < 0) {
+        send(key->fd, response, strlen(response), 0);
         log(ERROR, "Command processing failed for command %d", command);
         return STM_MONITORING_ERROR;
     }

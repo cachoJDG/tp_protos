@@ -130,24 +130,6 @@ bool authClient(int clientSocket) {
     return true;
 }
 
-void loadFileUsers(){
-	FILE *f = fopen("users.txt", "r");
-	if (f == NULL) {
-		fprintf(stderr, "Error opening users file: %s\n", strerror(errno));
-		return;
-	}
-
-	char line[128];
-	while (fgets(line, sizeof(line), f)) {
-		char *username = strtok(line, ";");
-		char *password = strtok(NULL, ";");
-		if (username && password) {
-			printf("Usuario: %s, Contraseña: %s\n", username, password);
-		}
-	}
-	fclose(f);
-}
-
 void readServerResponse(int clientSocket) {
     char buffer[BUFSIZE_MONITORING];
     ssize_t bytesReceived;

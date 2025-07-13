@@ -21,29 +21,6 @@ int user_cmp(const void *a, const void *b) {
     return strcmp(ua->username, ub->username);
 }
 
-// Cargar usuarios desde el archivo CSV
-void load_users() {
-    FILE *f = fopen(FILENAME, "r");
-    if (!f) {
-        perror("No se pudo abrir el archivo de usuarios");
-        return;
-    }
-    char line[NAME_MAX_LENGTH * 2] = {0};
-    while (fgets(line, sizeof(line), f) && user_count < 216) {
-        char *username = strtok(line, ";");
-        char *password = strtok(NULL, ";");
-        if (username && password) {
-            strncpy(users[user_count].username, username, sizeof(users[user_count].username) - 1);
-            users[user_count].username[sizeof(users[user_count].username) - 1] = '\0';
-            strncpy(users[user_count].password, password, sizeof(users[user_count].password) - 1);
-            users[user_count].password[sizeof(users[user_count].password) - 1] = '\0';
-            user_count++;
-        }
-    }
-    fclose(f);
-    qsort(users, user_count, sizeof(TUserData), user_cmp);
-}
-
 int find_user(const char *username) {
     int left = 0, right = user_count - 1;
     while (left <= right) {
@@ -63,11 +40,11 @@ int validate_login(const char *username, const char *password) {
 
 int add_user(const char *username, const char *password) {
     if (user_count >= 216) {
-        fprintf(stderr, "No se pueden agregar más usuarios.\n");
+        fprintf(stderr, "No more users can be added.\n");
         return -1;
     }
     if (find_user(username) >= 0) {
-        fprintf(stderr, "El usuario ya existe.\n");
+        fprintf(stderr, "User already exists.\n");
         return -1;
     }
     strncpy(users[user_count].username, username, sizeof(users[user_count].username) - 1);
@@ -81,14 +58,14 @@ int add_user(const char *username, const char *password) {
 
 void print_users() {
     for (int i = 0; i < user_count; i++) {
-        printf("Usuario: %s, Contraseña: %s\n", users[i].username, users[i].password);
+        printf("User: %s, Password: %s\n", users[i].username, users[i].password);
     }
 }
 
 char *getUsers(){
     static char buffer[1024];
     buffer[0] = '\0'; // Inicializar el buffer
-    strcat(buffer, "Usuarios registrados:\n");
+    strcat(buffer, "Registered users:\n");
     for (int i = 0; i < user_count; i++) {
         strcat(buffer, users[i].username);
         strcat(buffer, "\n");
@@ -100,7 +77,7 @@ char *getUsers(){
 int remove_user(const char *username) {
     int idx = find_user(username);
     if (idx < 0) {
-        fprintf(stderr, "El usuario no existe.\n");
+        fprintf(stderr, "User does not exist.\n");
         return -1;
     }
     for (int i = idx; i < user_count - 1; i++) {
@@ -113,7 +90,7 @@ int remove_user(const char *username) {
 int change_password(const char *username, const char *newPassword) {
     int idx = find_user(username);
     if (idx < 0) {
-        fprintf(stderr, "El usuario no existe.\n");
+        fprintf(stderr, "User does not exist.\n");
         return -1;
     }
     strncpy(users[idx].password, newPassword, sizeof(users[idx].password) - 1);

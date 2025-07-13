@@ -24,39 +24,53 @@ char *getStringFromSize(char *buffer) {
 }
 
 int handle_list_users_command(char *response, size_t response_size) {
-    // log(DEBUG, "Comando LIST_USERS recibido");
     snprintf(response, response_size, "%s", getUsers());
     return 0;
 }
 
 int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size) {
-    // log(DEBUG, "Comando ADD_USER recibido");
     
     if (bytes < 4) {
-        // log(ERROR, "Invalid ADD_USER message length");
         snprintf(response, response_size, "Error: Invalid message format\n");
+        return -1;
+    }
+
+    int username_len = (unsigned char)buffer[1];
+    if(username_len < 1 || username_len > UNAME_MAX_LENGTH) {
+        snprintf(response, response_size, "Error: Invalid username length\n");
         return -1;
     }
     
     char *usernameToAdd = getStringFromSize(buffer + 1);
-    if (!usernameToAdd) {
-        // log(ERROR, "Failed to parse username in ADD_USER");
+    if (usernameToAdd == NULL) {
+        free(usernameToAdd);
         snprintf(response, response_size, "Error: Invalid username format\n");
         return -1;
     }
-    
-    int username_len = (unsigned char)buffer[1];
-    char *password = getStringFromSize(buffer + 1 + 1 + username_len);
-    if (!password) {
-        // log(ERROR, "Failed to parse password in ADD_USER");
+
+    if(find_user(usernameToAdd) >= 0) {
+        snprintf(response, response_size, "Error: User %s already exists\n", usernameToAdd);
         free(usernameToAdd);
+        return -1;
+    }
+    
+    int password_len = (unsigned char)buffer[1 + 1 + username_len];
+    if(password_len < 1 || password_len > PASSWORD_MAX_LENGTH) {
+        free(usernameToAdd);
+        snprintf(response, response_size, "Error: Invalid password length\n");
+        return -1;
+    }
+
+    char *password = getStringFromSize(buffer + 1 + 1 + username_len);
+    if (password == NULL) {
+        free(password);
         snprintf(response, response_size, "Error: Invalid password format\n");
         return -1;
     }
     
     log(INFO, "Adding user: %s", usernameToAdd);
     add_user(usernameToAdd, password);
-    snprintf(response, response_size, "Usuario %s agregado exitosamente\n%s", usernameToAdd, getUsers());
+    snprintf(response, response_size, "User %s added succesfully\n%s", usernameToAdd, getUsers());
     
     free(usernameToAdd);
     free(password);
@@ -64,49 +78,72 @@ int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t 
 }
 
 int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size) {
-    // log(DEBUG, "Comando REMOVE_USER recibido");
     
     if (bytes < 3) {
-        // log(ERROR, "Invalid REMOVE_USER message length");
         snprintf(response, response_size, "Error: Invalid message format\n");
         return -1;
     }
     
+    int username_len = (unsigned char)buffer[1];
+    if (username_len < 1 || username_len > UNAME_MAX_LENGTH) {
+        snprintf(response, response_size, "Error: Invalid username length\n");  
+        return -1;
+    }
+
     char *usernameToRemove = getStringFromSize(buffer + 1);
-    if (!usernameToRemove) {
-        // log(ERROR, "Failed to parse username in REMOVE_USER");
+    if (usernameToRemove == NULL) {
         snprintf(response, response_size, "Error: Invalid username format\n");
+        return -1;
+    }
+
+    if(find_user(usernameToRemove) == -1) {
+        snprintf(response, response_size, "Error: User %s does not exist\n", usernameToRemove);
+        free(usernameToRemove);
         return -1;
     }
     
     log(INFO, "Removing user: %s", usernameToRemove);
     remove_user(usernameToRemove);
-    snprintf(response, response_size, "Usuario %s eliminado exitosamente\n%s", usernameToRemove, getUsers());
+    snprintf(response, response_size, "User %s deleted\n%s", usernameToRemove, getUsers());
     
     free(usernameToRemove);
     return 0;
 }
 
 int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size) {
-    // log(DEBUG, "Comando CHANGE_PASSWORD recibido");
     
     if (bytes < 4) {
-        // log(ERROR, "Invalid CHANGE_PASSWORD message length");
         snprintf(response, response_size, "Error: Invalid message format\n");
+        return -1;
+    }
+
+    int username_len = (unsigned char)buffer[1];
+    if (username_len < 1 || username_len > UNAME_MAX_LENGTH) {
+        snprintf(response, response_size, "Error: Invalid username length\n");  
         return -1;
     }
     
     char *usernameToChange = getStringFromSize(buffer + 1);
-    if (!usernameToChange) {
-        // log(ERROR, "Failed to parse username in CHANGE_PASSWORD");
+    if (usernameToChange == NULL) {
         snprintf(response, response_size, "Error: Invalid username format\n");
         return -1;
     }
+
+    if(find_user(usernameToChange) == -1) {
+        snprintf(response, response_size, "Error: User %s does not exist\n", usernameToChange);
+        free(usernameToChange);
+        return -1;
+    }
     
-    int username_len = (unsigned char)buffer[1];
+    int password_len = (unsigned char)buffer[1 + 1 + username_len];
+    if (password_len < 1 || password_len > PASSWORD_MAX_LENGTH) {
+        snprintf(response, response_size, "Error: Invalid password length\n");
+        free(usernameToChange);
+        return -1;
+    }
+
     char *newPassword = getStringFromSize(buffer + 1 + 1 + username_len);
-    if (!newPassword) {
-        // log(ERROR, "Failed to parse new password in CHANGE_PASSWORD");
+    if (newPassword == NULL) {
         free(usernameToChange);
         snprintf(response, response_size, "Error: Invalid password format\n");
         return -1;
@@ -114,7 +151,7 @@ int handle_change_password_command(char *buffer, ssize_t bytes, char *response, 
     
     log(INFO, "Changing password for user: %s", usernameToChange);
     change_password(usernameToChange, newPassword);
-    snprintf(response, response_size, "Contraseña de usuario %s cambiada exitosamente\n%s", usernameToChange, getUsers());
+    snprintf(response, response_size, "Password successfully changed for user %s.\n%s", usernameToChange, getUsers());
     
     free(usernameToChange);
     free(newPassword);
@@ -122,15 +159,14 @@ int handle_change_password_command(char *buffer, ssize_t bytes, char *response, 
 }
 
 int handle_unknown_command(char command, char *response, size_t response_size) {
-    log(DEBUG, "Comando desconocido recibido: %d", command);
-    snprintf(response, response_size, "Comando %d procesado\n", command);
+    log(DEBUG, "Unkown command received: %d", command);
+    snprintf(response, response_size, "Command %d processed\n", command);
     return 0;
 }
 
 int handle_get_metrics_command(char *response, size_t response_size) {
-    // log(DEBUG, "Comando GET_METRICS recibido");
     
-    snprintf(response, response_size, "Conexiones totales: %zu\nConexiones concurrentes: %zu\nBytes enviados: %zu\nBytes recibidos: %zu\n", 
+    snprintf(response, response_size, "Total connections: %zu\nFrequent connections: %zu\nBytes sent: %zu\nBytes received: %zu\n", 
         getMetrics()->total_connections, getMetrics()->current_connections, getMetrics()->bytes_sent, getMetrics()->bytes_received);
     
     return 0;
