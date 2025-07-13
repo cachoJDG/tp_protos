@@ -16,7 +16,7 @@ fd_handler PROXY_HANDLER = {
 
 // Acá va la parte de crear el nuevo socket (salvo que ya esté creado)
 void stm_connection_traffic_arrival(const unsigned state, struct selector_key *key) {
-    log(DEBUG, "stm_connection_traffic_arrival called for socket %d", key->fd);
+    // log(DEBUG, "stm_connection_traffic_arrival called for socket %d", key->fd);
     ClientData *clientData = key->data; 
 
     // int clientSocket = key->fd;
@@ -37,8 +37,6 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     errno = 0;
     ssize_t bytesWritten = sendBytesWithMetrics(clientData->client_fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
-        log(INFO, "errno: %s", strerror(errno));
-        log(INFO, "readable: %zu", readable);
         if (bytesWritten == 0) {
             log(ERROR, "[CLIENT] Error writing to socket %d: Unknown Error", clientData->client_fd);
             return STM_DONE; // No se cierra el socket, solo se marca como cerrado
@@ -138,7 +136,6 @@ void proxy_handler_read(struct selector_key *key) {
 
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
-        log(INFO, "errno: %s", strerror(errno));
         if (errno == 0 && bytesRead == 0) {
             log(INFO, "Connection closed by peer [SERVER] on socket %d", key->fd);
             // Freno:
@@ -188,8 +185,6 @@ void proxy_handler_write(struct selector_key *key) {
     uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
     ssize_t bytesWritten = sendBytesWithMetrics(proxyData->outgoing_fd, read_ptr, readable, 0);
     if (bytesWritten <= 0) {
-        log(INFO, "errno: %s", strerror(errno));
-        log(INFO, "readable: %zu", readable);
         if (errno == 0 && bytesWritten == 0) {
             log(ERROR, "[SERVER] Error writing to socket %d: Unknown Error", proxyData->outgoing_fd);
         }
@@ -200,7 +195,6 @@ void proxy_handler_write(struct selector_key *key) {
         }
         log(ERROR, "[SERVER] Error writing to socket %d: %s", proxyData->outgoing_fd, strerror(errno));
         selector_unregister_fd(key->s, proxyData->outgoing_fd);
-        // TODO: avisarle al cliente que se cerró la conexión
 
         return;
     }
