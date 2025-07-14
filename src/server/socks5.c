@@ -68,6 +68,12 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_block_ready = error_redirect, // TODO: Creo que este estado deberíamos manejarlo
     },
     {
+        .state = STM_ERROR_MSG_WRITE,
+        .on_write_ready = stm_error_msg_write,
+        .on_read_ready = error_redirect,
+        .on_block_ready = error_redirect,
+    },
+    {
         .state = STM_DNS_DONE, 
         .on_block_ready = stm_dns_done,
         // .on_read_ready = error_redirect,
@@ -156,6 +162,15 @@ ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toWrite) {
     return bytesWritten;
 }
 
+void response_ToBuffer(buffer *outgoingBuffer, char *response, size_t responseSize) {
+    buffer_reset(outgoingBuffer);
+    size_t someVariableThatPreventsErrors = 0;
+    uint8_t *writePtr = buffer_write_ptr(outgoingBuffer, &someVariableThatPreventsErrors);
+    memcpy(writePtr, response, responseSize);
+    buffer_write_adv(outgoingBuffer, responseSize);
+    return;
+}
+
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
     ClientData *clientData = key->data;
@@ -166,8 +181,10 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
-        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+        clientData->toWrite = 10;
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_ERROR_MSG_WRITE;
     }
 
     // 2. Parsing (de lo que hay en el buffer)
@@ -178,8 +195,10 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_INITIAL_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
-            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-            return STM_ERROR;
+            response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+            clientData->toWrite = 10;
+            selector_set_interest_key(key, OP_WRITE);
+            return STM_ERROR_MSG_WRITE;
     }
 
     // 3. Acciones
@@ -215,7 +234,9 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
         default:
             log(INFO, "Unsupported authentication method %d", clientData->authMethod);
             buffer_write(&clientData->outgoing_buffer, 0xFF); // No acceptable authentication method
-            break;
+            clientData->toWrite = 2;
+            selector_set_interest_key(key, OP_WRITE);
+            return STM_ERROR_MSG_WRITE;
     }
     clientData->toWrite = 2;
 
@@ -230,8 +251,10 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
 
     if(bytesWritten <= 0) {
-        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+        clientData->toWrite = 10;
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_ERROR_MSG_WRITE;
     }
 
     // 2. Repito hasta vaciar el buffer
@@ -248,8 +271,9 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
         case AUTH_NONE:
             return STM_REQUEST_READ;
         default:
-            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-            return STM_ERROR;
+            response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+            selector_set_interest_key(key, OP_WRITE);
+            return STM_ERROR_MSG_WRITE;
     }
     selector_set_interest_key(key, OP_NOOP);
     log(INFO, "Unsupported authentication method %d", clientData->authMethod);
@@ -270,8 +294,10 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
-        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+        clientData->toWrite = 10;
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_ERROR_MSG_WRITE;
     }
 
     // 2. Parsing (de lo que hay en el buffer)
@@ -282,8 +308,10 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_LOGIN_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
-            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-            return STM_ERROR;
+            response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+            clientData->toWrite = 10;
+            selector_set_interest_key(key, OP_WRITE);
+            return STM_ERROR_MSG_WRITE;
     }
 
     // 3. Acciones
@@ -297,8 +325,10 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
     if(loginVersion != SOCKS_LOGIN_VERSION) {
         log(ERROR, "Invalid login version %d", loginVersion);
-        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+        clientData->toWrite = 10;
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_ERROR_MSG_WRITE;
     }
 
     if(validate_login(username, password)) {
@@ -349,10 +379,40 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
         selector_set_interest_key(key, OP_READ);
         return STM_REQUEST_READ;
     }
-    selector_set_interest_key(key, OP_NOOP);
+    selector_set_interest_key(key, OP_WRITE);
     log(INFO, "Log in failed %d", clientData->authMethod);
-    sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-    return STM_ERROR;
+    response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+    clientData->toWrite = 10;
+    return STM_ERROR_MSG_WRITE;
+}
+
+StateSocksv5 stm_error_msg_write(struct selector_key *key) {
+    ClientData *clientData = key->data;
+
+    // 1. Leo del buffer
+    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
+
+    if (bytesWritten <= 0) {
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            errno = 0;
+            return STM_ERROR_MSG_WRITE;
+        }
+        log(ERROR, "[CLIENT] Error writing to socket %d: %s", clientData->client_fd, strerror(errno));
+        errno = 0;
+        selector_set_interest_key(key, OP_NOOP);
+        return STM_DONE;
+    }
+
+    // 2. Repito hasta vaciar el buffer
+    clientData->toWrite -= bytesWritten;
+    if (clientData->toWrite > 0) {
+        return STM_ERROR_MSG_WRITE;
+    }
+
+    // 3. Cambio de estado
+    selector_set_interest_key(key, OP_NOOP);
+    log(ERROR, "Error message written to socket %d", key->fd);
+    return STM_DONE;
 }
 
 void stm_error(unsigned state, struct selector_key *key) {
