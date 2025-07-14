@@ -171,6 +171,14 @@ void response_ToBuffer(buffer *outgoingBuffer, char *response, size_t responseSi
     return;
 }
 
+StateSocksv5 prepare_error(struct selector_key *key, char *response, size_t responseSize) {
+    ClientData *clientData = key->data;
+    response_ToBuffer(&clientData->outgoing_buffer, response, responseSize);
+    clientData->toWrite = responseSize;
+    selector_set_interest_key(key, OP_WRITE);
+    return STM_ERROR_MSG_WRITE;
+}
+
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
     ClientData *clientData = key->data;
@@ -233,10 +241,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
         case AUTH_GSSAPI:
         default:
             log(INFO, "Unsupported authentication method %d", clientData->authMethod);
-            buffer_write(&clientData->outgoing_buffer, 0xFF); // No acceptable authentication method
-            clientData->toWrite = 2;
-            selector_set_interest_key(key, OP_WRITE);
-            return STM_ERROR_MSG_WRITE;
+            return prepare_error(key, "\x05\xFF", 2);
     }
     clientData->toWrite = 2;
 
@@ -251,6 +256,7 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
 
     if(bytesWritten <= 0) {
+        // TODO: manejo de ERRNO
         response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
         clientData->toWrite = 10;
         selector_set_interest_key(key, OP_WRITE);
@@ -271,9 +277,7 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
         case AUTH_NONE:
             return STM_REQUEST_READ;
         default:
-            response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-            selector_set_interest_key(key, OP_WRITE);
-            return STM_ERROR_MSG_WRITE;
+            return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
     selector_set_interest_key(key, OP_NOOP);
     log(INFO, "Unsupported authentication method %d", clientData->authMethod);
@@ -294,10 +298,8 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
     if(bytesRead <= 0) {
-        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-        clientData->toWrite = 10;
-        selector_set_interest_key(key, OP_WRITE);
-        return STM_ERROR_MSG_WRITE;
+        // TODO: manejo de ERRNO
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
     // 2. Parsing (de lo que hay en el buffer)
@@ -308,10 +310,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
         case PARSER_INCOMPLETE:
             return STM_LOGIN_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
-            response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-            clientData->toWrite = 10;
-            selector_set_interest_key(key, OP_WRITE);
-            return STM_ERROR_MSG_WRITE;
+            return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
     // 3. Acciones
@@ -325,10 +324,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
     if(loginVersion != SOCKS_LOGIN_VERSION) {
         log(ERROR, "Invalid login version %d", loginVersion);
-        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-        clientData->toWrite = 10;
-        selector_set_interest_key(key, OP_WRITE);
-        return STM_ERROR_MSG_WRITE;
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
 
     if(validate_login(username, password)) {
@@ -364,8 +360,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     if(bytesWritten <= 0) {
         // TODO: En este tipo de situaciones post-send/recv es importante entender bien cómo funciona errno en el sistema de sockets no bloqueantes
         log(ERROR, "Error writing login response to client %ld", bytesWritten);
-        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
     // 2. Repito hasta vaciar el buffer
@@ -381,9 +376,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     }
     selector_set_interest_key(key, OP_WRITE);
     log(INFO, "Log in failed %d", clientData->authMethod);
-    response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-    clientData->toWrite = 10;
-    return STM_ERROR_MSG_WRITE;
+    return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
 }
 
 StateSocksv5 stm_error_msg_write(struct selector_key *key) {
