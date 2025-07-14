@@ -260,8 +260,9 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
 
     // 1. Leo del buffer
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
-
+    log(DEBUG, "Bytes written: %ld", bytesWritten);
     if(bytesWritten <= 0) {
+        log(ERROR, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno));
         return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
 
@@ -270,8 +271,9 @@ StateSocksv5 stm_request_write(struct selector_key *key) {
     if(clientData->toWrite > 0) {
         return STM_REQUEST_WRITE;
     }
+
+    // 3. Cambio de estado
     selector_set_interest_key(key, OP_READ);
-  
     return STM_CONNECTION_TRAFFIC;
 }
 
@@ -320,50 +322,35 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         return STM_ERROR;
     }
 
+
+    buffer_reset(&clientData->outgoing_buffer);
+    size_t bufferLimit = 0;
+    uint8_t *writePtr = buffer_write_ptr(&clientData->outgoing_buffer, &bufferLimit);
     switch (boundAddress.ss_family) {
         case AF_INET:
-            // sendBytesWithMetrics: '\x01' (ATYP identifier for IPv4) followed by the IP and PORT.
-            if (sendBytesWithMetrics(key->fd, "\x01", 1, 0) <= 0) {
-                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-                return STM_ERROR;
-            }
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_addr, 4, 0) <= 0) {
-                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-                return STM_ERROR;
-            }
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in*)&boundAddress)->sin_port, 2, 0) <= 0) {
-                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-                return STM_ERROR;
-            }
+            writePtr[0] = '\x01'; // ATYP identifier for IPv4
+            memcpy(writePtr + 1, &((struct sockaddr_in*)&boundAddress)->sin_addr, sizeof(struct in_addr));
+            memcpy(writePtr + 1 + sizeof(struct in_addr), &((struct sockaddr_in*)&boundAddress)->sin_port, sizeof(uint16_t));
+            buffer_write_adv(&clientData->outgoing_buffer, sizeof(struct in_addr) + 1 + sizeof(uint16_t));
+            clientData->toWrite = sizeof(struct in_addr) + 1 + sizeof(uint16_t);
             break;
 
         case AF_INET6:
-            // sendBytesWithMetrics: '\x04' (ATYP identifier for IPv6) followed by the IP and PORT.
-            if (sendBytesWithMetrics(key->fd, "\x04", 1, 0) <= 0) {
-                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-                return STM_ERROR;
-            }
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, 16, 0) <= 0) {
-                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-                return STM_ERROR;
-            }
-            if (sendBytesWithMetrics(key->fd, &((struct sockaddr_in6*)&boundAddress)->sin6_port, 2, 0) <= 0) {
-                sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-                return STM_ERROR;
-            }
+            writePtr[0] = '\x04'; // ATYP identifier for IPv6
+            memcpy(writePtr + 1, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, sizeof(struct in6_addr));
+            memcpy(writePtr + 1 + sizeof(struct in6_addr), &((struct sockaddr_in6*)&boundAddress)->sin6_port, sizeof(uint16_t));
+            buffer_write_adv(&clientData->outgoing_buffer, sizeof(struct in6_addr) + 1 + sizeof(uint16_t));
+            clientData->toWrite = sizeof(struct in6_addr) + 1 + sizeof(uint16_t);
             break;
 
         default:
             // We don't know the address type? sendBytesWithMetrics IPv4 0.0.0.0:0.
-            if (sendBytesWithMetrics(key->fd, "\x01\x00\x00\x01\x00\x00\x00", 7, 0) <= 0) {
-                return STM_ERROR;
-            }
-            break;
+            return prepare_error(key, "\x01\x00\x00\x01\x00\x00\x00", 7);
     }
     clientData->outgoing_fd = sock;
     freeaddrinfo(clientData->connectAddresses);
     clientData->connectAddresses = NULL;
 
-    selector_set_interest_key(key, OP_READ);
-    return STM_CONNECTION_TRAFFIC;
+    selector_set_interest_key(key, OP_WRITE);
+    return STM_REQUEST_WRITE;
 }
