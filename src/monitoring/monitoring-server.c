@@ -558,7 +558,7 @@ void handle_read_passive_monitoring(struct selector_key *key) {
     }
 
     /* Initialize the per-client buffer and FSM state */
-    buffer_init(&data->client_buffer, BUFSIZE_MONITORING, data->buffer);
+    buffer_init(&data->client_buffer, BUFSIZE_MONITORING, data->buffer_data);
     data->toRead               = 1;
     data->parsing_state        = 0;
     data->expected_message_size= 0;

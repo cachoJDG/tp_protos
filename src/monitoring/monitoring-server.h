@@ -46,6 +46,7 @@ typedef struct MonitoringClientData {
     int parsing_state;             // Estado del parsing (0=esperando comando, 1=leyendo datos)
     size_t expected_message_size;  // Tamaño esperado del mensaje completo
     fd_handler handler;
+    uint8_t buffer_data[BUFSIZE_MONITORING]; // Buffer de datos para la lectura, los que no se encuentran parseados todavia.
 } MonitoringClientData;
 
 // Public function declarations

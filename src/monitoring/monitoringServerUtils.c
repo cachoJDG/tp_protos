@@ -253,7 +253,7 @@ int handle_change_password_command(uint8_t *buffer, ssize_t bytes, char *respons
 
 int handle_unknown_command(char command, char *response, size_t response_size) {
     log(DEBUG, "Unknown command received: %d", command);
-    char *ans = "Command %d processed\n";
+    char *ans = "Unknown command received\n";
     uint16_t length = strlen(ans) + count_digits(command) - 2;
     write_length_to_response(response, length);
     snprintf(response + 2, response_size - 2, ans, command);
