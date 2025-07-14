@@ -7,6 +7,39 @@ Usage: python3 test_monitoring_fragmented.py [port]
 import socket
 import time
 import sys
+import struct # Importar para manejar la conversión de bytes
+
+def read_server_response(s):
+    """
+    Reads a server response, handling the 2-byte length prefix.
+    Returns the decoded response string or None on error/closure.
+    """
+    # Leer los primeros 2 bytes para obtener la longitud
+    len_bytes = s.recv(2)
+    if not len_bytes:
+        print("Server closed connection or no length bytes received.")
+        return None
+    if len(len_bytes) < 2:
+        print(f"Received less than 2 bytes for length: {len_bytes.hex()}")
+        return None
+
+    # Convertir de network byte order (big endian) a host byte order
+    # !H significa network byte order (big-endian), unsigned short (2 bytes)
+    bytes_to_read = struct.unpack('!H', len_bytes)[0]
+
+    if bytes_to_read == 0:
+        return "Respuesta vacía del servidor\n"
+
+    # Leer el resto del mensaje
+    full_response = b""
+    while len(full_response) < bytes_to_read:
+        chunk = s.recv(bytes_to_read - len(full_response))
+        if not chunk:
+            print("Server closed connection or no data received for response body.")
+            return None
+        full_response += chunk
+    
+    return full_response.decode('utf-8', errors='ignore')
 
 def send_fragmented(sock, data, fragment_size=1, delay=0.1):
     """Send data in tiny fragments with delays between each send."""
@@ -32,13 +65,13 @@ def login_and_command_fragmented(port, command_data, command_name):
     login_data = b"\x01" + bytes([len(username)]) + username + bytes([len(password)]) + password
     send_fragmented(s, login_data, fragment_size=1, delay=0.1)
     
-    # Get login response
-    login_resp = s.recv(10)
+    # Get login response (always 2 bytes: status + result)
+    login_resp = s.recv(2) # Only read 2 bytes for login response
     print(f"Login response: {login_resp.hex()}")
-    if len(login_resp) >= 2 and login_resp[1] == 1:
+    if len(login_resp) == 2 and login_resp[1] == 1:
         print("Login SUCCESS")
     else:
-        print("Login FAILED")
+        print("Login FAILED or incomplete response")
         s.close()
         return False
     
@@ -46,11 +79,15 @@ def login_and_command_fragmented(port, command_data, command_name):
     print(f"Step 2: {command_name} fragmented...")
     send_fragmented(s, command_data, fragment_size=1, delay=0.1)
     
-    # Get command response
+    # Get command response using the helper function
     try:
-        resp = s.recv(1024)
-        print(f"{command_name} response: {resp.decode('utf-8', errors='ignore')}")
-        success = True
+        resp_content = read_server_response(s)
+        if resp_content is None:
+            print(f"Error receiving {command_name} response: Connection closed or invalid data.")
+            success = False
+        else:
+            print(f"{command_name} response: {resp_content}")
+            success = True
     except Exception as e:
         print(f"Error receiving {command_name} response: {e}")
         success = False

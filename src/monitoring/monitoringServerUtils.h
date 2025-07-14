@@ -22,7 +22,7 @@ int handle_list_users_command(char *response, size_t response_size);
  * @param response_size Size of the response buffer
  * @return 0 on success, -1 on error
  */
-int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size);
+int handle_add_user_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size);
 
 /**
  * Processes a REMOVE_USER command
@@ -32,7 +32,7 @@ int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t 
  * @param response_size Size of the response buffer
  * @return 0 on success, -1 on error
  */
-int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
+int handle_remove_user_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
 
 /**
  * Processes a CHANGE_PASSWORD command
@@ -42,7 +42,7 @@ int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size
  * @param response_size Size of the response buffer
  * @return 0 on success, -1 on error
  */
-int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
+int handle_change_password_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
 
 /**
  * Processes an unknown command
@@ -58,7 +58,7 @@ int handle_unknown_command(char command, char *response, size_t response_size);
  * @param buffer Buffer containing length-prefixed string
  * @return Allocated string on success, NULL on error (caller must free)
  */
-char *getStringFromSize(char *buffer);
+char *getStringFromSize(uint8_t *buffer);
 
 /**
  * Processes a GET_METRICS command
@@ -77,6 +77,6 @@ int handle_get_metrics_command(char *response, size_t response_size);
  * @param username Username of the user executing the command
  * @return 0 on success, -1 on error
  */
-int handle_change_role_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
+int handle_change_role_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
 
 #endif // MONITORING_COMMANDS_H
