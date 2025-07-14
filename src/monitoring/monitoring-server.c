@@ -4,7 +4,6 @@
 #include <string.h>
 #include "../shared/logger.h"
 #include "../shared/util.h"
-#include "../parser.h"
 #include <signal.h>
 #include "../users/users.h"
 #include <stdlib.h>
@@ -401,7 +400,7 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     }
     
     char command = MonitoringClientData->buffer[0];
-    char *buffer = MonitoringClientData->buffer;
+    uint8_t *buffer = MonitoringClientData->buffer;
     
     log(DEBUG, "Processing command %d for client fd=%d", command, key->fd);
     
@@ -559,7 +558,7 @@ void handle_read_passive_monitoring(struct selector_key *key) {
     }
 
     /* Initialize the per-client buffer and FSM state */
-    buffer_init(&data->client_buffer, BUFSIZE_MONITORING, data->buffer_data);
+    buffer_init(&data->client_buffer, BUFSIZE_MONITORING, data->buffer);
     data->toRead               = 1;
     data->parsing_state        = 0;
     data->expected_message_size= 0;
@@ -576,7 +575,7 @@ void handle_read_passive_monitoring(struct selector_key *key) {
     data->handler.handle_close = client_handler_monitoring_close;
 
     log(DEBUG, "Size of MonitoringClientData: %zu bytes", sizeof(*data));
-    log(DEBUG, "Size of buffer_data field: %zu bytes", sizeof(data->buffer_data));
+    log(DEBUG, "Size of buffer_data field: %zu bytes", sizeof(data->buffer));
 
     /* Register the new client socket with its handler and state pointer */
     if (selector_register(key->s,

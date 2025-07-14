@@ -23,7 +23,7 @@ void write_length_to_response(char *response, uint16_t length) {
     memcpy(response, &length_net, 2);
 }
 
-char *getStringFromSize(char *buffer) {
+char *getStringFromSize(uint8_t *buffer) {
     if (!buffer) return NULL;
     
     unsigned char size = (unsigned char)buffer[0];
@@ -49,7 +49,7 @@ int handle_list_users_command(char *response, size_t response_size) {
     return 0;
 }
 
-int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size) {
+int handle_add_user_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size) {
     
     if (bytes < 4) {
         char *error_msg = "Error: Invalid message format\n";
@@ -118,7 +118,7 @@ int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t 
     return 0;
 }
 
-int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
+int handle_remove_user_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
     
     if (bytes < 3) {
         char *error_msg = "Error: Invalid message format\n";
@@ -174,7 +174,7 @@ int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size
     return 0;
 }
 
-int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
+int handle_change_password_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
     
     if (bytes < 4) {
         char *error_msg = "Error: Invalid message format\n";
@@ -280,7 +280,7 @@ int handle_get_metrics_command(char *response, size_t response_size) {
     return 0;
 }
 
-int handle_change_role_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
+int handle_change_role_command(uint8_t *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
 
     if (bytes < 3) {
         char *error_msg = "Error: Invalid message format\n";

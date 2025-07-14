@@ -35,14 +35,13 @@ enum StateMonitoring {
 
 // Client data structure
 typedef struct MonitoringClientData {
-    char buffer[BUFSIZE_MONITORING];
+    uint8_t buffer[BUFSIZE_MONITORING];
     ssize_t bytes;
     struct state_machine stm;
     char username[UNAME_MAX_LENGTH];
     char password[UNAME_MAX_LENGTH];
     int connection_should_close;
     buffer client_buffer;           // Buffer para acumular datos
-    uint8_t buffer_data[BUFSIZE_MONITORING];  // Array de datos del buffer
     ssize_t toRead;                // Bytes que faltan por leer
     int parsing_state;             // Estado del parsing (0=esperando comando, 1=leyendo datos)
     size_t expected_message_size;  // Tamaño esperado del mensaje completo
@@ -65,13 +64,6 @@ int acceptTCPConnection(int servSock);
  * @param length Length of the buffer
  */
 void print_hex_compact(const char* label, const unsigned char* buffer, size_t length);
-
-/**
- * Extracts a length-prefixed string from a buffer
- * @param buffer Buffer containing length-prefixed string
- * @return Allocated string on success, NULL on error (caller must free)
- */
-char *getStringFromSize(char *buffer);
 
 // State machine handlers
 void stm_read_monitoring_arrival(unsigned state, struct selector_key *key);
