@@ -32,7 +32,7 @@ int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t 
  * @param response_size Size of the response buffer
  * @return 0 on success, -1 on error
  */
-int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size);
+int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
 
 /**
  * Processes a CHANGE_PASSWORD command
@@ -42,7 +42,7 @@ int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size
  * @param response_size Size of the response buffer
  * @return 0 on success, -1 on error
  */
-int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size);
+int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
 
 /**
  * Processes an unknown command
@@ -67,5 +67,16 @@ char *getStringFromSize(char *buffer);
  * @return 0 on success, -1 on error
  */
 int handle_get_metrics_command(char *response, size_t response_size);
+
+/**
+ * Processes a CHANGE_ROLE command
+ * @param buffer Command buffer containing username and new role
+ * @param bytes Total bytes received
+ * @param response Buffer to store the response
+ * @param response_size Size of the response buffer
+ * @param username Username of the user executing the command
+ * @return 0 on success, -1 on error
+ */
+int handle_change_role_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username);
 
 #endif // MONITORING_COMMANDS_H

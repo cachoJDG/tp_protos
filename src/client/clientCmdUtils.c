@@ -85,3 +85,27 @@ int sendGetMetricsCommand(int clientSocket) {
     unsigned char msg = GET_METRICS;
     return send(clientSocket, &msg, 1, 0);
 }
+
+int sendChangeRoleCommand(int clientSocket, char **commands) {
+    char ans[BUFSIZE_MONITORING] = {0};
+    ans[0] = CHANGE_ROLE;
+    int index = 1;
+
+    if(commands[3][0] != '0' && commands[3][0] != '1') {
+        fprintf(stderr, "Client error: role must be '1' (admin) or '0' (user)\n");
+        return -1;
+    }
+
+    int usernameLength = strlen(commands[2]);
+    if (usernameLength < 1 || usernameLength > UNAME_MAX_LENGTH) {
+        fprintf(stderr, "Client error: username length is invalid\n");
+        return -1;
+    }
+
+    ans[index++] = usernameLength;
+    memcpy(ans + index, commands[2], usernameLength);
+    index += usernameLength;
+    ans[index++] = commands[3][0] - '0'; // Convert '0'/'1' to 0/1
+
+    return send(clientSocket, ans, index, 0);
+}

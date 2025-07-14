@@ -84,6 +84,14 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 	else if(parseGetMetricsCommand(commands, commandCount)) {
 		sendGetMetricsCommand(clientSocket);
 	}
+	else if(parseChangeRoleCommand(commands, commandCount)) {
+		if(sendChangeRoleCommand(clientSocket ,commands) == -1){
+			fprintf(stderr, "Error sending CHANGE ROLE command\n");
+			close(clientSocket);
+			free(commands);
+			exit(1);
+		}
+	}
 	else {
 		fprintf(stderr, "Unknown command\nSome examples:\nLIST USERS\nADD USER <username> <password>\nREMOVE USER <username>\nCHANGE PASSWORD <username> <newpassword>\nGET METRICS\n");
 		close(clientSocket);
@@ -171,7 +179,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 	
-	char *server = LOCALHOST;     // First arg: server name IP address 
+	char *server = LOCALHOST; 
 
 	// Second arg server port
 	char *port = argv[1];

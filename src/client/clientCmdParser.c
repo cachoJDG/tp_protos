@@ -34,3 +34,9 @@ int parseGetMetricsCommand(char ** commands, size_t commandCount){
     }
     return (strcmp(commands[0], "GET") == 0 && strcmp(commands[1], "METRICS") == 0);
 }
+int parseChangeRoleCommand(char ** commands, size_t commandCount){
+    if(commands == NULL || commandCount != 4) {
+        return 0;
+    }
+    return (strcmp(commands[0], "CHANGE") == 0 && strcmp(commands[1], "ROLE") == 0);
+}

@@ -77,10 +77,15 @@ int handle_add_user_command(char *buffer, ssize_t bytes, char *response, size_t 
     return 0;
 }
 
-int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size) {
+int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
     
     if (bytes < 3) {
         snprintf(response, response_size, "Error: Invalid message format\n");
+        return -1;
+    }
+
+    if(get_user_role(username) != ADMIN) {
+        snprintf(response, response_size, "Error: Only admins can remove users\n");
         return -1;
     }
     
@@ -110,10 +115,15 @@ int handle_remove_user_command(char *buffer, ssize_t bytes, char *response, size
     return 0;
 }
 
-int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size) {
+int handle_change_password_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
     
     if (bytes < 4) {
         snprintf(response, response_size, "Error: Invalid message format\n");
+        return -1;
+    }
+
+    if(get_user_role(username) != ADMIN) {
+        snprintf(response, response_size, "Error: Only admins can remove users\n");
         return -1;
     }
 
@@ -169,5 +179,51 @@ int handle_get_metrics_command(char *response, size_t response_size) {
     snprintf(response, response_size, "Total connections: %zu\nFrequent connections: %zu\nBytes sent: %zu\nBytes received: %zu\n", 
         getMetrics()->total_connections, getMetrics()->current_connections, getMetrics()->bytes_sent, getMetrics()->bytes_received);
     
+    return 0;
+}
+
+int handle_change_role_command(char *buffer, ssize_t bytes, char *response, size_t response_size, char *username) {
+
+    if (bytes < 3) {
+        snprintf(response, response_size, "Error: Invalid message format\n");
+        return -1;
+    }
+
+    if(get_user_role(username) != ADMIN) {
+        snprintf(response, response_size, "Error: Only admins can change roles\n");
+        return -1;
+    }
+    
+    int username_len = (unsigned char)buffer[1];
+    if (username_len < 1 || username_len > UNAME_MAX_LENGTH) {
+        snprintf(response, response_size, "Error: Invalid username length\n");  
+        return -1;
+    }
+
+    char *usernameToChange = getStringFromSize(buffer + 1);
+    if (usernameToChange == NULL) {
+        snprintf(response, response_size, "Error: Invalid username format\n");
+        return -1;
+    }
+
+    if(find_user(usernameToChange) == -1) {
+        snprintf(response, response_size, "Error: User %s does not exist\n", usernameToChange);
+        free(usernameToChange);
+        return -1;
+    }
+    
+    char newRole = buffer[1 + 1 + username_len];
+    if(newRole != 0 && newRole != 1) {
+        snprintf(response, response_size, "Error: Invalid role. Must be '0' (user) or '1' (admin)\n");
+        free(usernameToChange);
+        return -1;
+    }
+    
+    log(INFO, "Changing role for user: %s to %c", usernameToChange, newRole);
+    change_role(usernameToChange, newRole);
+    
+    snprintf(response, response_size, "Role successfully changed for user %s to %s.\n%s", usernameToChange, newRole == 1 ? "ADMIN" : "USER", getUsers());
+    
+    free(usernameToChange);
     return 0;
 }

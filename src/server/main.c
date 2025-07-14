@@ -19,6 +19,9 @@
 #define MAXPENDING 32 // Maximum outstanding connection requests
 #define SELECTOR_CAPACITY 1024
 
+#define ADMIN 1
+#define USER 0
+
 static bool keepRunning = true;
 
 /*
@@ -96,7 +99,9 @@ int main(int argc, char *argv[]) {
     struct socks5args args = {0};
     parse_args(argc, argv, &args);
 
-    for(int i = 0; i < args.users_n; i++) {
+    add_admin(args.users[0].name, args.users[0].pass);
+
+    for(int i = 1; i < args.users_n; i++) {
         add_user(args.users[i].name, args.users[i].pass);
     }
     

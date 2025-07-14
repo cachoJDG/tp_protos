@@ -265,6 +265,14 @@ enum StateMonitoring stm_request_monitoring_read(struct selector_key *key) {
                 clientData->parsing_state = 4; // Estado especial para REMOVE
                 clientData->bytes = 1;
                 return STM_REQUEST_MONITORING_READ;
+
+            case CHANGE_ROLE:
+                // Necesita username + rol
+                clientData->buffer[0] = command;
+                clientData->toRead = 1;
+                clientData->parsing_state = 7; // Nuevo estado para CHANGE_ROLE
+                clientData->bytes = 1;
+                return STM_REQUEST_MONITORING_READ;
                 
             default:
                 clientData->buffer[0] = command;
@@ -346,6 +354,34 @@ enum StateMonitoring stm_request_monitoring_read(struct selector_key *key) {
         selector_set_interest_key(key, OP_WRITE);
         return STM_REQUEST_MONITORING_WRITE;
     }
+
+    if (clientData->parsing_state == 7) {
+        // Leer longitud de username para CHANGE_ROLE
+        uint8_t usernameLength = buffer_read(&clientData->client_buffer);
+        clientData->buffer[clientData->bytes++] = usernameLength;
+        
+        clientData->toRead = usernameLength + 1; // username + 1 byte para rol
+        clientData->parsing_state = 8; // Estado final para CHANGE_ROLE
+        clientData->expected_message_size = usernameLength;
+        return STM_REQUEST_MONITORING_READ;
+    }
+
+    if (clientData->parsing_state == 8) {
+        // Leer username + rol (estado final para CHANGE_ROLE)
+        buffer_read_bytes(&clientData->client_buffer, (uint8_t*)&clientData->buffer[clientData->bytes], clientData->expected_message_size);
+        clientData->bytes += clientData->expected_message_size;
+        
+        // Leer el byte del rol
+        uint8_t role = buffer_read(&clientData->client_buffer);
+        clientData->buffer[clientData->bytes++] = role;
+        
+        // Reset para próximo comando
+        clientData->toRead = 1;
+        clientData->parsing_state = 0;
+        
+        selector_set_interest_key(key, OP_WRITE);
+        return STM_REQUEST_MONITORING_WRITE;
+    }
     
     return STM_MONITORING_ERROR;
 }
@@ -376,15 +412,19 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
             break;
             
         case REMOVE_USER:
-            result = handle_remove_user_command(buffer, MonitoringClientData->bytes, response, sizeof(response));
+            result = handle_remove_user_command(buffer, MonitoringClientData->bytes, response, sizeof(response), MonitoringClientData->username);
             break;
             
         case CHANGE_PASSWORD:
-            result = handle_change_password_command(buffer, MonitoringClientData->bytes, response, sizeof(response));
+            result = handle_change_password_command(buffer, MonitoringClientData->bytes, response, sizeof(response), MonitoringClientData->username);
             break;
 
         case GET_METRICS:
             result = handle_get_metrics_command(response, sizeof(response));
+            break;
+
+        case CHANGE_ROLE:
+            result = handle_change_role_command(buffer, MonitoringClientData->bytes, response, sizeof(response), MonitoringClientData->username);
             break;
             
         default:
@@ -393,6 +433,7 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     }
     
     if (result < 0) {
+        send(key->fd, response, strlen(response), 0);
         log(ERROR, "Command processing failed for command %d", command);
         return STM_MONITORING_ERROR;
     }

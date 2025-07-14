@@ -21,7 +21,8 @@ enum MonitoringCommands {
     ADD_USER = 2,
     REMOVE_USER = 3,
     CHANGE_PASSWORD = 4,
-    GET_METRICS = 5
+    GET_METRICS = 5,
+    CHANGE_ROLE = 6
 };
 
 // State machine states for monitoring protocol
@@ -39,8 +40,8 @@ typedef struct MonitoringClientData {
     char buffer[BUFSIZE_MONITORING];
     ssize_t bytes;
     struct state_machine stm;
-    char username[64];
-    char password[64];
+    char username[UNAME_MAX_LENGTH];
+    char password[UNAME_MAX_LENGTH];
     int connection_should_close;
     buffer client_buffer;           // Buffer para acumular datos
     uint8_t buffer_data[BUFSIZE_MONITORING];  // Array de datos del buffer

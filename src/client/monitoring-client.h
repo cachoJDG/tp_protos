@@ -13,7 +13,8 @@ enum {
 	ADD_USER = 2,
 	REMOVE_USER = 3,
 	CHANGE_PASSWORD = 4,
-	GET_METRICS = 5
+	GET_METRICS = 5,
+	CHANGE_ROLE = 6
 };
 
 #endif

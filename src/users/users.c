@@ -1,18 +1,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "../shared/util.h"
+#include "users.h"
 
-#define FILENAME "src/users/users.csv"
-//#define FILENAME "users.csv"
-
-typedef struct {
-    char username[NAME_MAX_LENGTH];
-    char password[NAME_MAX_LENGTH];
-} TUserData;
-
-TUserData users[216];
+TUserData users[MAX_USERS_IN_SERVER];
 int user_count = 0;
+
+int add_user_with_role(const char *username, const char *password, char role);
 
 // Comparador para qsort
 int user_cmp(const void *a, const void *b) {
@@ -38,12 +32,23 @@ int validate_login(const char *username, const char *password) {
     return (idx >= 0 && strcmp(users[idx].password, password) == 0);
 }
 
+int add_admin(const char *username, const char *password){
+    add_user_with_role(username, password, ADMIN);
+    return 0;
+}
+
 int add_user(const char *username, const char *password) {
-    if (user_count >= 216) {
+    add_user_with_role(username, password, USER);
+    return 0;
+}
+
+int add_user_with_role(const char *username, const char *password, char role) {
+
+    if(user_count >= MAX_USERS_IN_SERVER) {
         fprintf(stderr, "No more users can be added.\n");
         return -1;
     }
-    if (find_user(username) >= 0) {
+    if(find_user(username) >= 0) {
         fprintf(stderr, "User already exists.\n");
         return -1;
     }
@@ -51,6 +56,7 @@ int add_user(const char *username, const char *password) {
     users[user_count].username[sizeof(users[user_count].username) - 1] = '\0';
     strncpy(users[user_count].password, password, sizeof(users[user_count].password) - 1);
     users[user_count].password[sizeof(users[user_count].password) - 1] = '\0';
+    users[user_count].role = role;
     user_count++;
     qsort(users, user_count, sizeof(TUserData), user_cmp);
     return 0;
@@ -96,4 +102,22 @@ int change_password(const char *username, const char *newPassword) {
     strncpy(users[idx].password, newPassword, sizeof(users[idx].password) - 1);
     users[idx].password[sizeof(users[idx].password) - 1] = '\0';
     return 0;
+}
+
+int change_role(const char *username, char newRole){
+    int idx = find_user(username);
+    if (idx < 0) {
+        fprintf(stderr, "User does not exist.\n");
+        return -1;
+    }
+    users[idx].role = newRole;
+    return 0;
+}
+char get_user_role(const char *username){
+    int idx = find_user(username);
+    if (idx < 0) {
+        fprintf(stderr, "User does not exist.\n");
+        return -1;
+    }
+    return users[idx].role;
 }
