@@ -6,6 +6,7 @@
 #include "../selector.h"
 #include "../stm.h"
 #include "../buffer.h"
+#include <stdbool.h> // Necesario para el tipo bool
 
 // Constants
 #define BUFSIZE_MONITORING 256
@@ -33,20 +34,43 @@ enum StateMonitoring {
     STM_MONITORING_ERROR,
 };
 
+// Login Parsing States (usados para el campo parsing_state como enteros)
+enum LoginParsingStates {
+    LOGIN_PARSE_VERSION_AND_UNAME_LEN = 0, // Espera la versión y longitud del username
+    LOGIN_PARSE_UNAME_AND_PASS_LEN,        // Espera el username y longitud del password
+    LOGIN_PARSE_PASSWORD_BYTES,            // Espera los bytes de la contraseña
+    LOGIN_PARSE_DONE                       // Indica que el parsing del login ha terminado
+};
+
+// Request Parsing States (usados para el campo parsing_state como enteros)
+enum RequestParsingStates {
+    REQUEST_PARSE_COMMAND_TYPE = 0,         // Estado inicial: espera el byte del comando
+    REQUEST_PARSE_ADD_CHANGE_UNAME_LEN,     // Para ADD_USER, CHANGE_PASSWORD: espera longitud de username
+    REQUEST_PARSE_ADD_CHANGE_UNAME,         // Para ADD_USER, CHANGE_PASSWORD: espera el username
+    REQUEST_PARSE_ADD_CHANGE_PASS_LEN,      // Para ADD_USER, CHANGE_PASSWORD: espera longitud de password
+    REQUEST_PARSE_ADD_CHANGE_PASS,          // Para ADD_USER, CHANGE_PASSWORD: espera el password
+    REQUEST_PARSE_REMOVE_UNAME_LEN,         // Para REMOVE_USER: espera longitud de username
+    REQUEST_PARSE_REMOVE_UNAME,             // Para REMOVE_USER: espera el username
+    REQUEST_PARSE_CHANGE_ROLE_UNAME_LEN,    // Para CHANGE_ROLE: espera longitud de username
+    REQUEST_PARSE_CHANGE_ROLE_UNAME_AND_ROLE, // Para CHANGE_ROLE: espera username y rol
+    REQUEST_PARSE_DONE                      // Indica que el parsing del request ha terminado
+};
+
+
 // Client data structure
 typedef struct MonitoringClientData {
-    uint8_t buffer[BUFSIZE_MONITORING];
-    ssize_t bytes;
-    struct state_machine stm;
-    char username[UNAME_MAX_LENGTH];
-    char password[UNAME_MAX_LENGTH];
-    int connection_should_close;
-    buffer client_buffer;           // Buffer para acumular datos
-    ssize_t toRead;                // Bytes que faltan por leer
-    int parsing_state;             // Estado del parsing (0=esperando comando, 1=leyendo datos)
-    size_t expected_message_size;  // Tamaño esperado del mensaje completo
-    fd_handler handler;
-    uint8_t buffer_data[BUFSIZE_MONITORING]; // Buffer de datos para la lectura, los que no se encuentran parseados todavia.
+   uint8_t buffer[BUFSIZE_MONITORING];
+   ssize_t bytes;
+   struct state_machine stm;
+   char username[UNAME_MAX_LENGTH];
+   char password[UNAME_MAX_LENGTH];
+   int connection_should_close;
+   buffer client_buffer;           // Buffer para acumular datos
+   ssize_t toRead;                // Bytes que faltan por leer para el paso actual
+   int parsing_state;             // Usaremos enteros simples para los estados de parsing
+   size_t expected_message_size;  // Tamaño esperado del mensaje completo (e.g., longitud de username/password)
+   fd_handler handler;
+   uint8_t buffer_data[BUFSIZE_MONITORING]; // Buffer de datos para la lectura, los que no se encuentran parseados todavia.
 } MonitoringClientData;
 
 // Public function declarations
