@@ -98,8 +98,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
 
     if (bytesRead <= 0) {
         log(ERROR, "stm machine inconsistency: read handler called without bytes to read %ld", bytesRead);
-        sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
 
     // 2. Parsing (de lo que hay en el buffer)
@@ -112,8 +111,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
             return STM_REQUEST_READ; // No se recibieron todos los bytes necesarios
         case PARSER_ERROR:
             // log(ERROR, "Error parsing request data");
-            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-            return STM_ERROR;
+            return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
     // 3. Acciones
@@ -129,8 +127,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         default:
             log(ERROR, "client sent invalid COMMAND: 0x%x", parserInfo->command);
             // The reply specified REP as X'07' "Command not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
-            sendBytesWithMetrics(key->fd, "\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-            return STM_ERROR;
+            return prepare_error(key, "\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
 
     AddressTypeSocksv5 addressType = parserInfo->addressType;
@@ -210,12 +207,10 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         default:
             log(ERROR, "client sent invalid ADDRESS_TYPE: 0x%x", addressType);
             // The reply specified REP as X'08' "Address type not supported", ATYP as IPv4 and BND as 0.0.0.0:0.
-            sendBytesWithMetrics(key->fd, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-            return STM_ERROR;
+            return prepare_error(key, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
     // The reply specified REP as X'01' "General error", ATYP as IPv4 and BND as 0.0.0.0:0.
-    sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
-    return STM_ERROR;
+    return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
 }
 
 StateSocksv5 beginConnection(struct selector_key *key) {
@@ -231,10 +226,9 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         if (clientData->outgoing_fd < 0) {
             log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
             // TODO: hacer que este mensaje de error pase por el buffer
-            sendBytesWithMetrics(key->fd, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10, 0);
             freeaddrinfo(clientData->connectAddresses);
             clientData->connectAddresses = NULL;
-            return STM_ERROR;
+            return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
         }
         selector_fd_set_nio(clientData->outgoing_fd);
         errno = 0;
@@ -252,27 +246,40 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         }
     }
 
-    sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
+    // sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
 
     if (clientData->connectAddresses != NULL) {
         freeaddrinfo(clientData->connectAddresses);
         clientData->connectAddresses = NULL;
     }
-    return STM_ERROR;
+    return prepare_error(key, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10);
 }
 
 StateSocksv5 stm_request_write(struct selector_key *key) {
-    // ClientData *clientData = key->data; 
+    ClientData *clientData = key->data;
+
+    // 1. Leo del buffer
+    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
+
+    if(bytesWritten <= 0) {
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+    }
+
+    // 2. Repito hasta vaciar el buffer
+    clientData->toWrite -= bytesWritten;
+    if(clientData->toWrite > 0) {
+        return STM_REQUEST_WRITE;
+    }
+    selector_set_interest_key(key, OP_READ);
   
-    return STM_ERROR;
+    return STM_CONNECTION_TRAFFIC;
 }
 
 StateSocksv5 stm_dns_done(struct selector_key *key) {
     ClientData *clientData = key->data; 
     selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
     if(clientData->connectAddresses == NULL) {
-        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        return prepare_error(key, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10);
     }
     return beginConnection(key);
 }
@@ -291,24 +298,22 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         printSocketAddress((struct sockaddr*)&boundAddress, addrBuffer);
         log(INFO, "Remote socket bound at %s", addrBuffer);
     } else {
-        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x04\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
     }
     int err = 0;
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &(socklen_t){sizeof(int)})) {
         log(ERROR, "err %d", key->fd);
-        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
+        return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
     }
     if(err) {
         log(ERROR, "errrrrrr %d err=%d", key->fd, err);
         char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";
         errorRes[1] = errnoToRequestStatus(err);
-        sendBytesWithMetrics(key->fd, errorRes, 10, 0);
-        return STM_ERROR;
+        return prepare_error(key, errorRes, 10);
     }
     
     // sendBytesWithMetrics a server reply: SUCCESS, then sendBytesWithMetrics the address to which our socket is bound.
+    // TODO: pasar esto a las funciones de escritura
     if (sendBytesWithMetrics(key->fd, "\x05\x00\x00", 3, 0) <= 0) {
         log(ERROR, "connecting to remote: send failed %d", key->fd);
         sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);

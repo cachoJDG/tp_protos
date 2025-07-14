@@ -42,6 +42,8 @@ void stm_done_arrival(unsigned state, struct selector_key *key);
 
 ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toRead);
 ssize_t send_FromBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toWrite);
+void response_ToBuffer(buffer *outgoingBuffer, char *response, size_t responseSize);
+StateSocksv5 prepare_error(struct selector_key *key, char *response, size_t responseSize);
 
 StateSocksv5 error_redirect(struct selector_key *key);
 
