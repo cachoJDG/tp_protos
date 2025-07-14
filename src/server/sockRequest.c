@@ -256,25 +256,7 @@ StateSocksv5 beginConnection(struct selector_key *key) {
 }
 
 StateSocksv5 stm_request_write(struct selector_key *key) {
-    ClientData *clientData = key->data;
-
-    // 1. Leo del buffer
-    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
-    log(DEBUG, "Bytes written: %ld", bytesWritten);
-    if(bytesWritten <= 0) {
-        log(ERROR, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno));
-        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-    }
-
-    // 2. Repito hasta vaciar el buffer
-    clientData->toWrite -= bytesWritten;
-    if(clientData->toWrite > 0) {
-        return STM_REQUEST_WRITE;
-    }
-
-    // 3. Cambio de estado
-    selector_set_interest_key(key, OP_READ);
-    return STM_CONNECTION_TRAFFIC;
+    return write_everything(key, STM_REQUEST_WRITE, OP_READ, STM_CONNECTION_TRAFFIC);
 }
 
 StateSocksv5 stm_dns_done(struct selector_key *key) {
@@ -315,32 +297,28 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     }
     
     // sendBytesWithMetrics a server reply: SUCCESS, then sendBytesWithMetrics the address to which our socket is bound.
-    // TODO: pasar esto a las funciones de escritura
-    if (sendBytesWithMetrics(key->fd, "\x05\x00\x00", 3, 0) <= 0) {
-        log(ERROR, "connecting to remote: send failed %d", key->fd);
-        sendBytesWithMetrics(key->fd, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10, 0);
-        return STM_ERROR;
-    }
-
 
     buffer_reset(&clientData->outgoing_buffer);
     size_t bufferLimit = 0;
     uint8_t *writePtr = buffer_write_ptr(&clientData->outgoing_buffer, &bufferLimit);
+
+    memcpy(writePtr, "\x05\x00\x00", 3); // Version, REP, RSV
+
     switch (boundAddress.ss_family) {
         case AF_INET:
-            writePtr[0] = '\x01'; // ATYP identifier for IPv4
-            memcpy(writePtr + 1, &((struct sockaddr_in*)&boundAddress)->sin_addr, sizeof(struct in_addr));
-            memcpy(writePtr + 1 + sizeof(struct in_addr), &((struct sockaddr_in*)&boundAddress)->sin_port, sizeof(uint16_t));
-            buffer_write_adv(&clientData->outgoing_buffer, sizeof(struct in_addr) + 1 + sizeof(uint16_t));
-            clientData->toWrite = sizeof(struct in_addr) + 1 + sizeof(uint16_t);
+            writePtr[3] = '\x01'; // ATYP identifier for IPv4
+            memcpy(writePtr + 3 + 1, &((struct sockaddr_in*)&boundAddress)->sin_addr, sizeof(struct in_addr));
+            memcpy(writePtr + 3 + 1 + sizeof(struct in_addr), &((struct sockaddr_in*)&boundAddress)->sin_port, sizeof(uint16_t));
+            buffer_write_adv(&clientData->outgoing_buffer, 3 + sizeof(struct in_addr) + 1 + sizeof(uint16_t));
+            clientData->toWrite = 3 + sizeof(struct in_addr) + 1 + sizeof(uint16_t);
             break;
 
         case AF_INET6:
-            writePtr[0] = '\x04'; // ATYP identifier for IPv6
-            memcpy(writePtr + 1, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, sizeof(struct in6_addr));
-            memcpy(writePtr + 1 + sizeof(struct in6_addr), &((struct sockaddr_in6*)&boundAddress)->sin6_port, sizeof(uint16_t));
-            buffer_write_adv(&clientData->outgoing_buffer, sizeof(struct in6_addr) + 1 + sizeof(uint16_t));
-            clientData->toWrite = sizeof(struct in6_addr) + 1 + sizeof(uint16_t);
+            writePtr[3] = '\x04'; // ATYP identifier for IPv6
+            memcpy(writePtr + 3 + 1, &((struct sockaddr_in6*)&boundAddress)->sin6_addr, sizeof(struct in6_addr));
+            memcpy(writePtr + 3 + 1 + sizeof(struct in6_addr), &((struct sockaddr_in6*)&boundAddress)->sin6_port, sizeof(uint16_t));
+            buffer_write_adv(&clientData->outgoing_buffer, 3 + sizeof(struct in6_addr) + 1 + sizeof(uint16_t));
+            clientData->toWrite = 3 + sizeof(struct in6_addr) + 1 + sizeof(uint16_t);
             break;
 
         default:

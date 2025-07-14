@@ -179,6 +179,39 @@ StateSocksv5 prepare_error(struct selector_key *key, char *response, size_t resp
     return STM_ERROR_MSG_WRITE;
 }
 
+StateSocksv5 write_everything(struct selector_key *key, StateSocksv5 currentState, fd_interest nextInterest, StateSocksv5 nextState) {
+    ClientData *clientData = key->data;
+    
+    // 1. Leo del buffer
+    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
+
+    // 1,5. Manejo de errores [WRITE]
+    if (bytesWritten <= 0) {
+        if (bytesWritten == 0) {
+            log(ERROR, "Failed to write request data to client fd=%d: Unknown Error", key->fd);
+            return STM_DONE; // No se cierra el socket, solo se marca como cerrado
+        }
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            errno = 0;
+            return currentState; // No se pudo escribir, pero no hubo error
+        }
+        log(ERROR, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno));
+        errno = 0;
+        selector_set_interest_key(key, OP_NOOP);
+        return STM_DONE;
+    }
+
+    // 2. Repito hasta vaciar el buffer
+    clientData->toWrite -= bytesWritten;
+    if (clientData->toWrite > 0) {
+        return currentState;
+    }
+
+    // 3. Cambio de estado
+    selector_set_interest_key(key, nextInterest);
+    return nextState;
+}
+
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
     ClientData *clientData = key->data;
@@ -255,12 +288,20 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
     // 1. Leo del buffer
     ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
 
+    // 1,5. Manejo de errores [WRITE]
     if(bytesWritten <= 0) {
-        // TODO: manejo de ERRNO
-        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-        clientData->toWrite = 10;
-        selector_set_interest_key(key, OP_WRITE);
-        return STM_ERROR_MSG_WRITE;
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            errno = 0;
+            return STM_REQUEST_WRITE; // No se pudo escribir, pero no hubo error
+        }
+        if (bytesWritten == 0) { 
+            log(ERROR, "Failed to write request data to client fd=%d: Unknown Error", key->fd); 
+        } else { 
+            log(ERROR, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno)); 
+        }
+        errno = 0;
+        selector_set_interest_key(key, OP_NOOP);
+        return STM_DONE;
     }
 
     // 2. Repito hasta vaciar el buffer
@@ -380,32 +421,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
 }
 
 StateSocksv5 stm_error_msg_write(struct selector_key *key) {
-    ClientData *clientData = key->data;
-
-    // 1. Leo del buffer
-    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
-
-    if (bytesWritten <= 0) {
-        if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            errno = 0;
-            return STM_ERROR_MSG_WRITE;
-        }
-        log(ERROR, "[CLIENT] Error writing to socket %d: %s", clientData->client_fd, strerror(errno));
-        errno = 0;
-        selector_set_interest_key(key, OP_NOOP);
-        return STM_DONE;
-    }
-
-    // 2. Repito hasta vaciar el buffer
-    clientData->toWrite -= bytesWritten;
-    if (clientData->toWrite > 0) {
-        return STM_ERROR_MSG_WRITE;
-    }
-
-    // 3. Cambio de estado
-    selector_set_interest_key(key, OP_NOOP);
-    log(ERROR, "Error message written to socket %d", key->fd);
-    return STM_DONE;
+    return write_everything(key, STM_ERROR_MSG_WRITE, OP_NOOP, STM_DONE);
 }
 
 void stm_error(unsigned state, struct selector_key *key) {

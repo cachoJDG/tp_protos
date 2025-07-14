@@ -15,7 +15,7 @@ def send_fragmented(sock, data, fragment_size=1, delay=0.1):
 def main():
     # SOCKS5 proxy details
     proxy_host = "127.0.0.1"
-    proxy_port = 2021
+    proxy_port = 2040
     username = b"john_doe"
     password = b"1234"
     target_host = "example.org"
@@ -29,6 +29,7 @@ def main():
     # 1. Authentication method negotiation - FRAGMENTED
     print("\n[Step 1] Sending auth negotiation request (FRAGMENTED)...")
     auth_request = b"\x05\x01\x02"  # SOCKS5, 1 auth method, username/password auth
+    # auth_request = b"\x05\x01\x04"  # SOCKS5, 0x04 unvalid auth method
     send_fragmented(s, auth_request, fragment_size=1, delay=0.2)
     
     # Receive auth method response

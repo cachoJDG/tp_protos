@@ -46,5 +46,6 @@ void response_ToBuffer(buffer *outgoingBuffer, char *response, size_t responseSi
 StateSocksv5 prepare_error(struct selector_key *key, char *response, size_t responseSize);
 
 StateSocksv5 error_redirect(struct selector_key *key);
+StateSocksv5 write_everything(struct selector_key *key, StateSocksv5 currentState, fd_interest nextInterest, StateSocksv5 nextState);
 
 #endif
