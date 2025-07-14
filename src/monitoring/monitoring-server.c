@@ -28,7 +28,7 @@ int acceptTCPConnection(int servSock) {
 	if (clntSock < 0) {
 		return -1;
 	}
-    if(selector_fd_set_nio(clntSock < 0)) {
+    if(selector_fd_set_nio(clntSock) < 0) {
         return -1;
     }
 
@@ -393,7 +393,6 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
     }
     
     if (result < 0) {
-        send(key->fd, response, strlen(response), 0);
         log(ERROR, "Command processing failed for command %d", command);
         return STM_MONITORING_ERROR;
     }
@@ -482,6 +481,9 @@ void client_handler_monitoring_close(struct selector_key *key) {
     if (MonitoringClientData) {
         free(MonitoringClientData);
     }
+
+    // free(key->handler);
+    // free(key->data);
 }
 
 void handle_read_passive_monitoring(struct selector_key *key) {
@@ -496,44 +498,41 @@ void handle_read_passive_monitoring(struct selector_key *key) {
         return;
     }
 
-    fd_handler *clientHandler = malloc(sizeof(fd_handler));
-    if (!clientHandler) {
+    /* Allocate and zero-initialize the client state + embedded handler */
+    MonitoringClientData *data = calloc(1, sizeof(*data));
+    if (!data) {
         close(clientSocket);
         return;
     }
 
-    clientHandler->handle_read = client_handler_monitoring_read;
-    clientHandler->handle_write = client_handler_monitoring_write;
-    clientHandler->handle_close = client_handler_monitoring_close;
-    clientHandler->handle_block = client_handler_monitoring_block;
+    /* Initialize the per-client buffer and FSM state */
+    buffer_init(&data->client_buffer, BUFSIZE_MONITORING, data->buffer_data);
+    data->toRead               = 1;
+    data->parsing_state        = 0;
+    data->expected_message_size= 0;
+    data->stm.initial          = STM_LOGIN_MONITORING_READ;
+    data->stm.max_state        = STM_MONITORING_ERROR;
+    data->stm.states           = CLIENT_STATE_MONITORING_TABLE;
+    data->connection_should_close = 0;
+    stm_init(&data->stm);
 
-    log(DEBUG, "Size of MonitoringClientData: %zu bytes", sizeof(struct MonitoringClientData));
-    log(DEBUG, "Size of buffer field: %zu bytes", sizeof(((MonitoringClientData*)0)->buffer));
-    MonitoringClientData *MonitoringClientData = calloc(1, sizeof(struct MonitoringClientData));
-    if (!MonitoringClientData) {
-        free(clientHandler);
-        close(clientSocket);
-        return;
-    }
-    log(DEBUG, "Allocated %zu bytes for MonitoringClientData", sizeof(struct MonitoringClientData));
+    /* Set up the callbacks on the embedded handler */
+    data->handler.handle_read  = client_handler_monitoring_read;
+    data->handler.handle_write = client_handler_monitoring_write;
+    data->handler.handle_block = client_handler_monitoring_block;
+    data->handler.handle_close = client_handler_monitoring_close;
 
-    
-    buffer_init(&MonitoringClientData->client_buffer, BUFSIZE_MONITORING, MonitoringClientData->buffer_data);
-    MonitoringClientData->toRead = 1;
-    MonitoringClientData->parsing_state = 0;
-    MonitoringClientData->expected_message_size = 0;
+    log(DEBUG, "Size of MonitoringClientData: %zu bytes", sizeof(*data));
+    log(DEBUG, "Size of buffer_data field: %zu bytes", sizeof(data->buffer_data));
 
-    MonitoringClientData->stm.initial = STM_LOGIN_MONITORING_READ;
-    MonitoringClientData->stm.max_state = STM_MONITORING_ERROR;
-    MonitoringClientData->stm.states = CLIENT_STATE_MONITORING_TABLE;
-    MonitoringClientData->connection_should_close = 0;
-
-    stm_init(&MonitoringClientData->stm);
-
-    if (selector_register(key->s, clientSocket, clientHandler, OP_READ, (void *)MonitoringClientData) != SELECTOR_SUCCESS) {
+    /* Register the new client socket with its handler and state pointer */
+    if (selector_register(key->s,
+                          clientSocket,
+                          &data->handler,
+                          OP_READ,
+                          data) != SELECTOR_SUCCESS) {
         log(ERROR, "Failed to register client socket fd=%d in selector", clientSocket);
-        free(clientHandler);
-        free(MonitoringClientData);
+        free(data);
         close(clientSocket);
         return;
     }

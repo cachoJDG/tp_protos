@@ -47,6 +47,7 @@ typedef struct MonitoringClientData {
     ssize_t toRead;                // Bytes que faltan por leer
     int parsing_state;             // Estado del parsing (0=esperando comando, 1=leyendo datos)
     size_t expected_message_size;  // Tamaño esperado del mensaje completo
+    fd_handler handler;
 } MonitoringClientData;
 
 // Public function declarations
