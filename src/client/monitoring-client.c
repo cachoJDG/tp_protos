@@ -154,38 +154,41 @@ bool authClient(int clientSocket) {
 }
 
 void readServerResponse(int clientSocket) {
-    char buffer[BUFSIZE_MONITORING];
-	int bytesRead;
+    char buffer[BUFSIZE_COMMAND_MONITORING] = {0}; // Buffer para la respuesta del servidor
+    int bytesRead;
     
-	bytesRead = read(clientSocket, buffer, 1);
-	if (bytesRead <= 0) {
-		if (bytesRead == 0) {
-			fprintf(stderr, "El servidor cerró la conexión\n");
-		} else {
-			perror("Error al leer del socket");
-		}
-		return;
-	}
-	int bytesToRead = buffer[0];
-
-	bytesRead = read(clientSocket, buffer + 1, bytesToRead);
-
-	if (bytesRead <= 0) {
-		if (bytesRead == 0) {
-			fprintf(stderr, "El servidor cerró la conexión\n");
-		} else {
-			perror("Error al leer del socket");
-		}
-		return;
-	}
+    // Leer los primeros 2 bytes para obtener la longitud
+    bytesRead = read(clientSocket, buffer, 2);
+    if (bytesRead <= 0) {
+        if (bytesRead == 0) {
+            fprintf(stderr, "El servidor cerró la conexión\n");
+        } else {
+            perror("Error al leer del socket");
+        }
+        return;
+    }
+    
+    // Convertir de network byte order (big endian) a host byte order
+    uint32_t bytesToRead;
+    memcpy(&bytesToRead, buffer, 2);
+    bytesToRead = ntohs(bytesToRead);  // Network to Host Short
+    
+    // Leer el resto del mensaje
+    bytesRead = read(clientSocket, buffer + 2, bytesToRead);
+    if (bytesRead <= 0) {
+        if (bytesRead == 0) {
+            fprintf(stderr, "El servidor cerró la conexión\n");
+        } else {
+            perror("Error al leer del socket");
+        }
+        return;
+    }
     
     if (bytesToRead > 0) {
-        buffer[bytesToRead + 1] = '\0'; // Null-terminate
-        printf("%s", buffer + 1);
+        buffer[bytesToRead + 2] = '\0'; // Null-terminate
+        printf("%s", buffer + 2);
     } else if (bytesToRead == 0) {
-        printf("El servidor cerró la conexión\n");
-    } else {
-        perror("Error al recibir respuesta del servidor");
+        printf("Respuesta vacía del servidor\n");
     }
 }
 

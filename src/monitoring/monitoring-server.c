@@ -37,6 +37,13 @@ int acceptTCPConnection(int servSock) {
 	return clntSock;
 }
 
+uint32_t getBytesToReadFromTwoBytes(char *buffer) {
+    uint32_t bytesToRead;
+    memcpy(&bytesToRead, buffer, 2);
+    return ntohs(bytesToRead) + 2;
+}
+    
+
 ssize_t recv_to_monitoring_buffer(int fd, buffer *buf, ssize_t maxBytes) {
     ssize_t available = 0;
     uint8_t *writePtr = buffer_write_ptr(buf, (size_t *)&available);
@@ -430,14 +437,20 @@ enum StateMonitoring stm_request_monitoring_write(struct selector_key *key) {
             result = handle_unknown_command(command, response, sizeof(response));
             break;
     }
-    
+
+    u_int32_t response_length = getBytesToReadFromTwoBytes(response); //se obtiene la longitud de la respuesta a partir de los primeros 2 bytes
+    if(response_length > RESPONSE_BUFFER_SIZE) {
+        log(ERROR, "Response size exceeds buffer limit for command %d", command);
+        return STM_MONITORING_ERROR;
+    }
+
     if (result < 0) {
-        send(key->fd, response, strlen(response), 0);
+        send(key->fd, response, response_length, 0);
         log(ERROR, "Command processing failed for command %d", command);
         return STM_MONITORING_ERROR;
     }
     
-    ssize_t sent = send(key->fd, response, strlen(response), 0);
+    ssize_t sent = send(key->fd, response, response_length, 0);
     if (sent < 0) {
         log(ERROR, "Failed to send response to client fd=%d: %s", key->fd, strerror(errno));
         return STM_MONITORING_ERROR;
