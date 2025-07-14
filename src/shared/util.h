@@ -57,7 +57,7 @@ typedef struct socks5_request_parserinfo {
     uint8_t command; // CMD_CONNECT, CMD_BIND, CMD_UDP_ASSOCIATE
     uint8_t reserved; // Ignorar
     uint8_t addressType; // SOCKSV5_ADDR_TYPE_IPV4, SOCKSV5_ADDR_TYPE_DOMAIN_NAME, SOCKSV5_ADDR_TYPE_IPV6
-    uint8_t wtf[4];
+    uint8_t dummy_bytes[4];
     struct in_addr ipv4;
     struct in6_addr ipv6;
     uint8_t domainNameLength; // Longitud del nombre de dominio
@@ -81,6 +81,7 @@ typedef struct ClientData {
     uint8_t clientBufferData[BUFSIZE];
     buffer outgoing_buffer; // buffer para almacenar datos del socket remoto
     uint8_t remoteBufferData[BUFSIZE];
+    uint8_t username[NAME_MAX_LENGTH];
     char isLoggedIn;
     AuthMethod authMethod;
 

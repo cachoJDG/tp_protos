@@ -13,7 +13,6 @@ typedef enum {DEBUG=0, INFO, ERROR, FATAL} LOG_LEVEL;
 
 extern LOG_LEVEL current_level;
 
-void print_hex(const unsigned char *buffer, size_t length);
 /**
 *  Minimo nivel de log a registrar. Cualquier llamada a log con un nivel mayor a newLevel sera ignorada
 **/

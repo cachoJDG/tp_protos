@@ -53,7 +53,7 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     if (!buffer_can_read(&clientData->outgoing_buffer) && clientData->outgoing_closed) {
         // Si no hay datos para escribir y el socket remoto está cerrado, dejo de escuchar
         selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
-        log(INFO, "No more data to write to client %d, closing connection", clientData->client_fd);
+        log(DEBUG, "No more data to write to client %d, closing connection", clientData->client_fd);
         return STM_DONE;
     }
 
@@ -79,7 +79,7 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         if (errno == 0 && bytesRead == 0) {
-            log(INFO, "Connection closed by peer [CLIENT] on socket %d. Operating in write mode", key->fd);
+            log(DEBUG, "Connection closed by peer [CLIENT] on socket %d. Operating in write mode", key->fd);
             // Freno:
             // 1. SOCKET CLIENTE --> BUFFER CLIENTE
             // 2. BUFFER CLIENTE --> SOCKET REMOTO
@@ -127,7 +127,7 @@ void proxy_handler_read(struct selector_key *key) {
     ssize_t bytesRead = recvBytesWithMetrics(key->fd, write_ptr, available, 0);
     if (bytesRead <= 0) {
         if (errno == 0 && bytesRead == 0) {
-            log(INFO, "Connection closed by peer [SERVER] on socket %d", key->fd);
+            log(DEBUG, "Connection closed by peer [SERVER] on socket %d", key->fd);
             // Freno:
             // 1. SOCKET CLIENTE --> BUFFER CLIENTE
             // 2. BUFFER CLIENTE --> SOCKET REMOTO
@@ -212,8 +212,6 @@ void proxy_handler_close(struct selector_key *key) {
         log(ERROR, "proxy_handler_close called with NULL data. fd=%d", key->fd);
         return;
     }
-    log(INFO, "Closing proxy connection for proxy %d", key->fd);
+    log(DEBUG, "Closing proxy connection for proxy %d", key->fd);
     closeSocketWithMetrics(key->fd);
 }
-
-// TODO: Arreglar error de readable: 0

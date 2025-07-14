@@ -70,7 +70,7 @@ int setupTCPServerSocket(char *address, short servicePort) {
 			socklen_t addrSize = sizeof(localAddr);
 			if (getsockname(servSock, (struct sockaddr *) &localAddr, &addrSize) >= 0) {
 				printSocketAddress((struct sockaddr *) &localAddr, addrBuffer);
-				log(INFO, "Binding to %s", addrBuffer);
+				log(DEBUG, "Binding to %s", addrBuffer);
 			}
 		} else {
 			log(DEBUG, "Cant't bind %s", strerror(errno));  
@@ -85,7 +85,7 @@ int setupTCPServerSocket(char *address, short servicePort) {
 }
 
 static void sigterm_handler(const int signal) {
-    log(INFO, "signal %d, cleaning up and exiting", signal);
+    log(DEBUG, "signal %d, cleaning up and exiting", signal);
     keepRunning = false;
 }
 
@@ -95,6 +95,7 @@ int main(int argc, char *argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     close(STDIN_FILENO);
+    setLogLevel(INFO);
 
     struct socks5args args = {0};
     parse_args(argc, argv, &args);
@@ -154,13 +155,13 @@ int main(int argc, char *argv[]) {
     selector_register(selector, servSock, &listen_handler, OP_READ, NULL);
     selector_register(selector, monitoringSock, &monitoring_listen_handler, OP_READ, NULL);
 
-    log(INFO, "SOCKS5 server listening on port %u", args.socks_port);
-    log(INFO, "Monitoring server listening on port %u", args.mng_port);
+    log(INFO, "SOCKS5 server listening on %s port %u", args.socks_addr, args.socks_port);
+    log(INFO, "Monitoring server listening on %s port %u", args.mng_addr, args.mng_port);
     selector_status sel_status = SELECTOR_SUCCESS;
     while (keepRunning && (sel_status = selector_select(selector)) == SELECTOR_SUCCESS) {
         ; 
     }
-    log(INFO, "closing server with selector status=%d", sel_status);
+    log(INFO, "closing server with selector status=%s", selector_error(sel_status));
     selector_destroy(selector);
     selector_close();
     if(servSock >= 0) {

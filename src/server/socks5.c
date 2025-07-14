@@ -65,7 +65,7 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = stm_connection_traffic_write,
         .on_read_ready = stm_connection_traffic_read,
         .on_departure = stm_connection_traffic_departure,
-        .on_block_ready = error_redirect, // TODO: Creo que este estado deberíamos manejarlo
+        .on_block_ready = error_redirect, 
     },
     {
         .state = STM_ERROR_MSG_WRITE,
@@ -104,7 +104,7 @@ static int acceptTCPConnection(int servSock) {
     }
 
 	printSocketAddress((struct sockaddr *) &clntAddr, addrBuffer);
-	log(INFO, "Handling client %s", addrBuffer);
+	log(DEBUG, "Handling client %s", addrBuffer);
 
 	return clntSock;
 }
@@ -188,14 +188,14 @@ StateSocksv5 write_everything(struct selector_key *key, StateSocksv5 currentStat
     // 1,5. Manejo de errores [WRITE]
     if (bytesWritten <= 0) {
         if (bytesWritten == 0) {
-            log(ERROR, "Failed to write request data to client fd=%d: Unknown Error", key->fd);
+            log(DEBUG, "Failed to write request data to client fd=%d: Unknown Error", key->fd);
             return STM_DONE; // No se cierra el socket, solo se marca como cerrado
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
             errno = 0;
             return currentState; // No se pudo escribir, pero no hubo error
         }
-        log(ERROR, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno));
+        log(DEBUG, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno));
         errno = 0;
         selector_set_interest_key(key, OP_NOOP);
         return STM_DONE;
@@ -232,7 +232,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
             selector_set_interest_key(key, OP_NOOP);
             return STM_DONE; // No se cierra el socket, solo se marca como cerrado
         }
-        log(ERROR, "Failed to read initial data from client fd=%d: %s", key->fd, strerror(errno));
+        log(DEBUG, "Failed to read initial data from client fd=%d: %s", key->fd, strerror(errno));
         errno = 0;
         return STM_DONE;
     }
@@ -282,7 +282,7 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
             break;
         case AUTH_GSSAPI:
         default:
-            log(INFO, "Unsupported authentication method %d", clientData->authMethod);
+            log(DEBUG, "Unsupported authentication method %d", clientData->authMethod);
             return prepare_error(key, "\x05\xFF", 2);
     }
     clientData->toWrite = 2;
@@ -302,7 +302,7 @@ StateSocksv5 stm_initial_write(struct selector_key *key) {
         default:
             break;
     }
-    log(INFO, "Unsupported authentication method %d", clientData->authMethod);
+    log(DEBUG, "Unsupported authentication method %d", clientData->authMethod);
     return prepare_error(key, "\x05\xFF", 2);
 }
 
@@ -326,7 +326,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
             return STM_LOGIN_READ; // No se pudo leer, pero no hubo error
         }
         if (bytesRead == 0) {
-            log(INFO, "Connection closed by peer [CLIENT] on socket %d", key->fd);
+            log(DEBUG, "Connection closed by peer [CLIENT] on socket %d", key->fd);
             selector_set_interest_key(key, OP_NOOP);
             return STM_DONE; // No se cierra el socket, solo se marca como cerrado
         }
@@ -356,12 +356,13 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     uint8_t loginVersion = parserInfo->loginVersion;
 
     if(loginVersion != SOCKS_LOGIN_VERSION) {
-        log(ERROR, "Invalid login version %d", loginVersion);
+        log(DEBUG, "Invalid login version %d", loginVersion);
         return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
 
     if(validate_login(username, password)) {
-        log(INFO, "Login successful for user '%s'", username);
+        log(DEBUG, "Login successful for user '%s'", username);
+        memcpy(clientData->username, username, NAME_MAX_LENGTH);
         clientData->isLoggedIn = 1;
     } else {
         log(INFO, "Login failed for user '%s'", username);
@@ -389,7 +390,7 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
     if (clientData->isLoggedIn) {
         return write_everything(key, STM_LOGIN_WRITE, OP_READ, STM_REQUEST_READ);
     } else {
-        log(INFO, "Log in failed %d", clientData->authMethod);
+        log(DEBUG, "Log in failed %d", clientData->authMethod);
         return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 }
@@ -401,7 +402,7 @@ StateSocksv5 stm_error_msg_write(struct selector_key *key) {
 void stm_error(unsigned state, struct selector_key *key) {
     ClientData *clientData = key->data; 
     selector_set_interest_key(key, OP_NOOP);
-    log(ERROR, "error called for socket %d, state=%d", key->fd, clientData->stm.current->state);
+    log(DEBUG, "error called for socket %d, state=%d", key->fd, clientData->stm.current->state);
 }
 
 void stm_done_arrival(unsigned state, struct selector_key *key) {
