@@ -62,14 +62,11 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     }
 
 
-    if (buffer_can_read(&clientData->outgoing_buffer) && !clientData->client_closed) {
+    if (buffer_can_read(&clientData->outgoing_buffer)) {
         selector_set_interest(key->s, clientData->client_fd, OP_READ | OP_WRITE);
-
-    } else if (buffer_can_read(&clientData->outgoing_buffer) && (clientData->client_closed || clientData->outgoing_closed)) {
+    } else if (buffer_can_read(&clientData->outgoing_buffer) && clientData->outgoing_closed) {
         selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
 
-    } else if (!buffer_can_read(&clientData->outgoing_buffer) && clientData->client_closed) {
-        selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
     } else {
         selector_set_interest(key->s, clientData->client_fd, OP_READ);
     }
@@ -89,17 +86,14 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
             log(INFO, "Connection closed by peer [CLIENT] on socket %d. Operating in write mode", key->fd);
             // Freno:
             // 1. SOCKET CLIENTE --> BUFFER CLIENTE
+            // 2. BUFFER CLIENTE --> SOCKET REMOTO
+            // 3. SOCKET REMOTO --> BUFFER REMOTO
+            // 4. BUFFER REMOTO --> SOCKET CLIENTE
             // Dejo:
-            // 1. BUFFER CLIENTE --> SOCKET REMOTO [Si hay para escribir]
-            // 2. SOCKET REMOTO --> BUFFER REMOTO
-            // 3. BUFFER REMOTO --> SOCKET CLIENTE
-            clientData->client_closed = 1;
-            if (buffer_can_read(&clientData->outgoing_buffer)) {
-                selector_set_interest(key->s, key->fd, OP_WRITE);
-            } else {
-                selector_set_interest(key->s, key->fd, OP_NOOP);
-            }
-            return STM_CONNECTION_TRAFFIC;
+            // nada
+            selector_set_interest(key->s, key->fd, OP_NOOP);
+            selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
+            return STM_DONE;
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
             // log(DEBUG, "Socket %d would block, not reading", key->fd);
@@ -166,9 +160,6 @@ void proxy_handler_read(struct selector_key *key) {
     }
 
     buffer_write_adv(&proxyData->outgoing_buffer, bytesRead);
-    if (proxyData->client_closed) {
-        selector_set_interest(key->s, proxyData->client_fd, OP_WRITE);
-    }
     selector_set_interest(key->s, proxyData->client_fd, OP_READ | OP_WRITE);
 
     unsigned state = stm_connection_traffic_write(key); // Ahorra un Select
