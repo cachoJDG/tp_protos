@@ -221,11 +221,20 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
     // 1. Guardo datos en el buffer (sin que se lean bytes de más)
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
+    // 1,5. Manejo de errores [READ]
     if(bytesRead <= 0) {
-        response_ToBuffer(&clientData->outgoing_buffer, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
-        clientData->toWrite = 10;
-        selector_set_interest_key(key, OP_WRITE);
-        return STM_ERROR_MSG_WRITE;
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            errno = 0;
+            return STM_INITIAL_READ; // No se pudo leer, pero no hubo error
+        }
+        if (bytesRead == 0) {
+            log(INFO, "Connection closed by peer [CLIENT] on socket %d", key->fd);
+            selector_set_interest_key(key, OP_NOOP);
+            return STM_DONE; // No se cierra el socket, solo se marca como cerrado
+        }
+        log(ERROR, "Failed to read initial data from client fd=%d: %s", key->fd, strerror(errno));
+        errno = 0;
+        return STM_DONE;
     }
 
     // 2. Parsing (de lo que hay en el buffer)
@@ -285,44 +294,16 @@ StateSocksv5 stm_initial_read(struct selector_key *key) {
 StateSocksv5 stm_initial_write(struct selector_key *key) {
     ClientData *clientData = key->data;
 
-    // 1. Leo del buffer
-    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
-
-    // 1,5. Manejo de errores [WRITE]
-    if(bytesWritten <= 0) {
-        if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            errno = 0;
-            return STM_REQUEST_WRITE; // No se pudo escribir, pero no hubo error
-        }
-        if (bytesWritten == 0) { 
-            log(ERROR, "Failed to write request data to client fd=%d: Unknown Error", key->fd); 
-        } else { 
-            log(ERROR, "Failed to write request data to client fd=%d: %s", key->fd, strerror(errno)); 
-        }
-        errno = 0;
-        selector_set_interest_key(key, OP_NOOP);
-        return STM_DONE;
-    }
-
-    // 2. Repito hasta vaciar el buffer
-    clientData->toWrite -= bytesWritten;
-    if(clientData->toWrite > 0) {
-        return STM_INITIAL_WRITE;
-    }
-    selector_set_interest_key(key, OP_READ);
-
-    // 3. Cambio de estado
     switch(clientData->authMethod) {
         case AUTH_USER_PASSWORD:
-            return STM_LOGIN_READ;
+            return write_everything(key, STM_INITIAL_WRITE, OP_READ, STM_LOGIN_READ);
         case AUTH_NONE:
-            return STM_REQUEST_READ;
+            return write_everything(key, STM_INITIAL_WRITE, OP_READ, STM_REQUEST_READ);
         default:
-            return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+            break;
     }
-    selector_set_interest_key(key, OP_NOOP);
     log(INFO, "Unsupported authentication method %d", clientData->authMethod);
-    return STM_ERROR;
+    return prepare_error(key, "\x05\xFF", 2);
 }
 
 void stm_login_read_arrival(unsigned state, struct selector_key *key) {
@@ -338,9 +319,20 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     // 1. Guardo datos en el buffer (sin que se lean bytes de más)
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
+    // 1,5. Manejo de errores [READ]
     if(bytesRead <= 0) {
-        // TODO: manejo de ERRNO
-        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            errno = 0;
+            return STM_LOGIN_READ; // No se pudo leer, pero no hubo error
+        }
+        if (bytesRead == 0) {
+            log(INFO, "Connection closed by peer [CLIENT] on socket %d", key->fd);
+            selector_set_interest_key(key, OP_NOOP);
+            return STM_DONE; // No se cierra el socket, solo se marca como cerrado
+        }
+        log(ERROR, "Failed to read login data from client fd=%d: %s", key->fd, strerror(errno));
+        errno = 0;
+        return STM_DONE;
     }
 
     // 2. Parsing (de lo que hay en el buffer)
@@ -394,30 +386,12 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
 StateSocksv5 stm_login_write(struct selector_key *key) {
     ClientData *clientData = key->data;
-
-    // 1. Leo del buffer
-    ssize_t bytesWritten = send_FromBuffer_WithMetrics(key->fd, &clientData->outgoing_buffer, clientData->toWrite);
-
-    if(bytesWritten <= 0) {
-        // TODO: En este tipo de situaciones post-send/recv es importante entender bien cómo funciona errno en el sistema de sockets no bloqueantes
-        log(ERROR, "Error writing login response to client %ld", bytesWritten);
+    if (clientData->isLoggedIn) {
+        return write_everything(key, STM_LOGIN_WRITE, OP_READ, STM_REQUEST_READ);
+    } else {
+        log(INFO, "Log in failed %d", clientData->authMethod);
         return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
-
-    // 2. Repito hasta vaciar el buffer
-    clientData->toWrite -= bytesWritten;
-    if(clientData->toWrite > 0) {
-        return STM_LOGIN_WRITE;
-    }
-
-    // 3. Cambio de estado
-    if(clientData->isLoggedIn) {
-        selector_set_interest_key(key, OP_READ);
-        return STM_REQUEST_READ;
-    }
-    selector_set_interest_key(key, OP_WRITE);
-    log(INFO, "Log in failed %d", clientData->authMethod);
-    return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
 }
 
 StateSocksv5 stm_error_msg_write(struct selector_key *key) {

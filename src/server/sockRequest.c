@@ -96,9 +96,20 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
     // 1. Guardo datos en el buffer (sin que se lean bytes de más)
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
-    if (bytesRead <= 0) {
-        log(ERROR, "stm machine inconsistency: read handler called without bytes to read %ld", bytesRead);
-        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+    // 1,5. Manejo de errores [READ]
+    if(bytesRead <= 0) {
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            errno = 0;
+            return STM_REQUEST_READ; // No se pudo leer, pero no hubo error
+        }
+        if (bytesRead == 0) {
+            log(INFO, "Connection closed by peer [CLIENT] on socket %d", key->fd);
+            selector_set_interest_key(key, OP_NOOP);
+            return STM_DONE; // No se cierra el socket, solo se marca como cerrado
+        }
+        log(ERROR, "Failed to read request data from client fd=%d: %s", key->fd, strerror(errno));
+        errno = 0;
+        return STM_DONE;
     }
 
     // 2. Parsing (de lo que hay en el buffer)
