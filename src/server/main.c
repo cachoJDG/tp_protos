@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
     close(STDIN_FILENO);
     setLogLevel(INFO);
 
-    struct socks5args args = {0};
+    static struct socks5args args = {0};
     parse_args(argc, argv, &args);
 
     add_admin(args.users[0].name, args.users[0].pass);

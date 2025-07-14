@@ -2,8 +2,7 @@
 #define ARGS_H_kFlmYm1tW9p5npzDr2opQJ9jM8
 
 #include <stdbool.h>
-
-#define MAX_USERS 10
+#include "./users/users.h"
 
 struct users
 {
@@ -21,7 +20,7 @@ struct socks5args
 
     bool disectors_enabled;
 
-    struct users users[MAX_USERS];
+    struct users users[MAX_USERS_IN_SERVER];
     int users_n; // cantidad de usuarios definidos
 };
 

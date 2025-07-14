@@ -22,6 +22,7 @@
         "types.h": "c",
         "initialparser.h": "c",
         "sockutils.h": "c",
-        "random": "c"
+        "random": "c",
+        "sstream": "c"
     }
 }
