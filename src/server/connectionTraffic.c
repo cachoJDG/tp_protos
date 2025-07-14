@@ -35,7 +35,7 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     if (bytesWritten <= 0) {
         if (bytesWritten == 0) {
             log(ERROR, "[CLIENT] Error writing to socket %d: Unknown Error", clientData->client_fd);
-            return STM_DONE; // No se cierra el socket, solo se marca como cerrado
+            return STM_DONE;
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
             // log(DEBUG, "Socket %d would block, not writing", clientData->client_fd);

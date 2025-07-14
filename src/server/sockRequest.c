@@ -299,11 +299,13 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         printSocketAddress((struct sockaddr*)&boundAddress, addrBuffer);
         log(INFO, "Remote socket bound at %s", addrBuffer);
     } else {
+        selector_unregister_fd(key->s, clientData->outgoing_fd);
         return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
     }
     int err = 0;
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &(socklen_t){sizeof(int)})) {
         log(ERROR, "err %d", key->fd);
+        selector_unregister_fd(key->s, clientData->outgoing_fd);
         return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
@@ -311,6 +313,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         log(ERROR, "errrrrrr %d err=%d", key->fd, err);
         char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";
         errorRes[1] = errnoToRequestStatus(err);
+        selector_unregister_fd(key->s, clientData->outgoing_fd);
         return prepare_error(key, errorRes, 10);
     }
     
@@ -341,6 +344,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
 
         default:
             // We don't know the address type? sendBytesWithMetrics IPv4 0.0.0.0:0.
+            selector_unregister_fd(key->s, clientData->outgoing_fd);
             return prepare_error(key, "\x01\x00\x00\x01\x00\x00\x00", 7);
     }
     clientData->outgoing_fd = sock;
