@@ -54,11 +54,11 @@ void *dns_thread_func(void *arg) {
                 addr = &((struct sockaddr_in6 *)p->ai_addr)->sin6_addr;
             }
             inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
-            // log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
+            log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
         }
 
     } else {
-        // log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
+        log(ERROR, "Error al resolver DNS para %s:%s", job->host, job->service);
         job->result = NULL;
     }
     selector_notify_block(job->selector, job->client_fd);
@@ -243,8 +243,7 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         }
         if (clientData->outgoing_fd < 0) {
             log(ERROR, "Failed to create remote socket on %s", printAddressPort(addr, addrBuffer));
-            // TODO: hacer que este mensaje de error pase por el buffer
-            freeaddrinfo(clientData->connectAddresses);
+
             clientData->connectAddresses = NULL;
             return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
         }
@@ -262,18 +261,10 @@ StateSocksv5 beginConnection(struct selector_key *key) {
             log(ERROR, "Failed to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
             close(clientData->outgoing_fd);
             clientData->outgoing_fd = -1;
-            struct addrinfo* next_addr = addr->ai_next;
-            freeaddrinfo(addr);
-            addr = next_addr;
+            addr = addr->ai_next;
         }
     }
 
-    // sendBytesWithMetrics(key->fd, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10, 0);
-
-    if (clientData->connectAddresses != NULL) {
-        freeaddrinfo(clientData->connectAddresses);
-        clientData->connectAddresses = NULL;
-    }
     return prepare_error(key, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10);
 }
 
@@ -300,7 +291,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     clientData->server_is_connecting = 0;
     selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
 
-    char addrBuffer[MAX_ADDR_BUFFER];
+    char addrBuffer[MAX_ADDR_BUFFER] = {0};
     int sock = clientData->outgoing_fd;
     struct sockaddr_storage boundAddress;
     socklen_t boundAddressLen = sizeof(boundAddress);
@@ -315,7 +306,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         log(ERROR, "err %d", key->fd);
         return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
     }
-    log(DEBUG, "err %d", err);
+
     if(err) {
         log(ERROR, "errrrrrr %d err=%d", key->fd, err);
         char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";
@@ -353,8 +344,6 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
             return prepare_error(key, "\x01\x00\x00\x01\x00\x00\x00", 7);
     }
     clientData->outgoing_fd = sock;
-    freeaddrinfo(clientData->connectAddresses);
-    clientData->connectAddresses = NULL;
 
     selector_set_interest_key(key, OP_WRITE);
     return STM_REQUEST_WRITE;

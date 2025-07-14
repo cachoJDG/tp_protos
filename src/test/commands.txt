@@ -9,6 +9,9 @@ curl -x socks5h://john_doe:1234@127.0.0.1:1024 -H "Host: example.org" http://23.
 curl -x socks5h://john_doe:1234@127.0.0.1:1024 http://[2600:1406:bc00:17::6007:810d]/ -H "Host: example.org"
 curl http://[2600:1406:bc00:17::6007:810d]/ -H "Host: example.org"
 
+ncat --proxy 127.0.0.1:1024 --proxy-type socks5 --proxy-auth john_doe:1234 6.9.6.9 6969
+
+
 dig -t AAAA example.org +short
 # 2600:1408:ec00:36::1736:7f2f
 
@@ -19,3 +22,12 @@ dig -t AAAA example.org +short
 # s = socket.create_connection(("localhost", 1024))
 # s.send(bytes.fromhex("05 01 00"))
 # print(s.recv(10))
+
+# nginx
+ls -l -h 
+dd if=/dev/urandom of=random4gb bs=1M count=4096 status=progress
+curl -x socks5h://john_doe:1234@127.0.0.1:1024 localhost | md5sum
+
+
+echo '0a'  | \
+ | sed > tr -s ' ' '\n' | sed 's/^/\\x/' | tr -d '\n'
