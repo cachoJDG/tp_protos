@@ -91,7 +91,7 @@ int sendChangeRoleCommand(int clientSocket, char **commands) {
     ans[0] = CHANGE_ROLE;
     int index = 1;
 
-    if(commands[3][0] != '0' && commands[3][0] != '1') {
+    if((commands[3][0] != '0' && commands[3][0] != '1') || strlen(commands[3]) != 1) {
         fprintf(stderr, "Client error: role must be '1' (admin) or '0' (user)\n");
         return -1;
     }

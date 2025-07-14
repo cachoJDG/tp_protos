@@ -12,7 +12,6 @@
 #include "monitoringServerUtils.h"
 
 #define MAXPENDING 5
-#define BUFSIZE_MONITORING 512
 #define MAX_ADDR_BUFFER_MONITORING 128
 #define SELECTOR_CAPACITY 256
 

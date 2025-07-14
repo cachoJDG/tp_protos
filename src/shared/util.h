@@ -20,9 +20,8 @@
 
 #define BUFSIZE (32768) // 32KB
 #define MAX_ADDR_BUFFER (64)
-#define NAME_MAX_LENGTH (256)
+#define NAME_MAX_LENGTH (64)
 #define SOCKS_LOGIN_VERSION (1)
-#define NAME_MAX_LENGTH (256)
 
 
 typedef enum AuthMethod {

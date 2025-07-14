@@ -4,7 +4,7 @@
 #include "monitoring-server.h"
 
 // Command response buffer size
-#define RESPONSE_BUFFER_SIZE 1024
+#define RESPONSE_BUFFER_SIZE 256
 
 /**
  * Processes a LIST_USERS command

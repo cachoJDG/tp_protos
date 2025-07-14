@@ -8,12 +8,10 @@
 #include "../buffer.h"
 
 // Constants
-// #define MAXPENDING 5
-#define BUFSIZE_MONITORING 512
+#define BUFSIZE_MONITORING 256
 #define MAX_ADDR_BUFFER_MONITORING 128
-#define UNAME_MAX_LENGTH 256
-#define PASSWORD_MAX_LENGTH 256
-// #define SELECTOR_CAPACITY 256
+#define UNAME_MAX_LENGTH 64
+#define PASSWORD_MAX_LENGTH 64
 
 // Command definitions
 enum MonitoringCommands {

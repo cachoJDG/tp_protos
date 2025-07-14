@@ -93,7 +93,7 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		}
 	}
 	else {
-		fprintf(stderr, "Unknown command\nSome examples:\nLIST USERS\nADD USER <username> <password>\nREMOVE USER <username>\nCHANGE PASSWORD <username> <newpassword>\nGET METRICS\n");
+		fprintf(stderr, "Unknown command\nSome examples:\nLIST USERS\nADD USER <username> <password>\nREMOVE USER <username>\nCHANGE PASSWORD <username> <newpassword>\nCHANGE ROLE <username> <role>\nGET METRICS\n");
 		close(clientSocket);
 		free(commands);
 		exit(1);
@@ -121,7 +121,7 @@ bool authClient(int clientSocket) {
 		return false;
 	}
 
-    char message[BUFSIZE_MONITORING] = { 0 }; // TODO: verificar que clientName y clientPassword no excedan. BUFFER OVERFLOW
+    char message[BUFSIZE_MONITORING] = { 0 };
     size_t index = 0;
     message[index++] = MONITORING_VERSION;
 
@@ -155,14 +155,34 @@ bool authClient(int clientSocket) {
 
 void readServerResponse(int clientSocket) {
     char buffer[BUFSIZE_MONITORING];
-    ssize_t bytesReceived;
+	int bytesRead;
     
-    bytesReceived = recv(clientSocket, buffer, BUFSIZE_MONITORING - 1, 0);
+	bytesRead = read(clientSocket, buffer, 1);
+	if (bytesRead <= 0) {
+		if (bytesRead == 0) {
+			fprintf(stderr, "El servidor cerró la conexión\n");
+		} else {
+			perror("Error al leer del socket");
+		}
+		return;
+	}
+	int bytesToRead = buffer[0];
+
+	bytesRead = read(clientSocket, buffer + 1, bytesToRead);
+
+	if (bytesRead <= 0) {
+		if (bytesRead == 0) {
+			fprintf(stderr, "El servidor cerró la conexión\n");
+		} else {
+			perror("Error al leer del socket");
+		}
+		return;
+	}
     
-    if (bytesReceived > 0) {
-        buffer[bytesReceived] = '\0'; // Null-terminate
-        printf("%s", buffer);
-    } else if (bytesReceived == 0) {
+    if (bytesToRead > 0) {
+        buffer[bytesToRead + 1] = '\0'; // Null-terminate
+        printf("%s", buffer + 1);
+    } else if (bytesToRead == 0) {
         printf("El servidor cerró la conexión\n");
     } else {
         perror("Error al recibir respuesta del servidor");
