@@ -4,6 +4,7 @@
 #include "sockUtils.h"
 #include "socks5.h"
 #include "initialParser.h"
+#include "connectionTraffic.h"
 
 typedef enum CommandSocksv5 {
     CMD_CONNECT = 0x01,
@@ -116,7 +117,6 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
     clientData->toRead -= bytesRead;
     switch(request_parse(&clientData->client_buffer, parserInfo, &clientData->toRead)) {
         case PARSER_OK:
-
             break; // Termino el parsing
         case PARSER_INCOMPLETE:
             return STM_REQUEST_READ; // No se recibieron todos los bytes necesarios
@@ -224,6 +224,13 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
     return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
 }
 
+fd_handler PROXY_HANDLER = {
+    .handle_read = proxy_handler_read,
+    .handle_write = proxy_handler_write,
+    .handle_block = proxy_handler_block,
+    .handle_close = proxy_handler_close,
+};
+
 StateSocksv5 beginConnection(struct selector_key *key) {
     ClientData *clientData = key->data;
     selector_set_interest(key->s, clientData->client_fd, OP_WRITE);
@@ -246,6 +253,10 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         if (connect(clientData->outgoing_fd, addr->ai_addr, addr->ai_addrlen) == 0 || errno == EINPROGRESS) {
             log(DEBUG, "Successfully connected to: %s (%s %s) %s %s", printFamily(addr), printType(addr), printProtocol(addr), addr->ai_canonname ? addr->ai_canonname : "-", printAddressPort(addr, addrBuffer));
             metrics_increment_connections();
+
+            clientData->server_is_connecting = 1;
+            selector_register(key->s, clientData->outgoing_fd, &PROXY_HANDLER, OP_WRITE, key->data);
+            selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
             return STM_CONNECT_ATTEMPT;
         } else {
             log(ERROR, "Failed to connect() remote socket to %s: %s", printAddressPort(addr, addrBuffer), strerror(errno));
@@ -285,6 +296,10 @@ void stm_connect_attempt_arrival(unsigned state, struct selector_key *key) {
 
 StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     ClientData *clientData = key->data; 
+
+    clientData->server_is_connecting = 0;
+    selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
+
     char addrBuffer[MAX_ADDR_BUFFER];
     int sock = clientData->outgoing_fd;
     struct sockaddr_storage boundAddress;
@@ -300,6 +315,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         log(ERROR, "err %d", key->fd);
         return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
     }
+    log(DEBUG, "err %d", err);
     if(err) {
         log(ERROR, "errrrrrr %d err=%d", key->fd, err);
         char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";

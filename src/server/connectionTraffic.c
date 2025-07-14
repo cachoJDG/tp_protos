@@ -7,12 +7,7 @@
 #include "sockUtils.h"
 
 
-fd_handler PROXY_HANDLER = {
-    .handle_read = proxy_handler_read,
-    .handle_write = proxy_handler_write,
-    .handle_block = proxy_handler_block,
-    .handle_close = proxy_handler_close,
-};
+
 
 // Acá va la parte de crear el nuevo socket (salvo que ya esté creado)
 void stm_connection_traffic_arrival(const unsigned state, struct selector_key *key) {
@@ -20,12 +15,13 @@ void stm_connection_traffic_arrival(const unsigned state, struct selector_key *k
     ClientData *clientData = key->data; 
 
     // int clientSocket = key->fd;
-    int remoteSocket = clientData->outgoing_fd;
+    // int remoteSocket = clientData->outgoing_fd;
 
     buffer_init(&clientData->outgoing_buffer, BUFSIZE, clientData->remoteBufferData);
 
     // Los buffers se comparten entre el cliente y el servidor remoto
-    selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, key->data); // Comparto el contexto
+    selector_set_interest_key(key, OP_READ); // Dejo de escuchar el socket del cliente
+    // selector_register(key->s, remoteSocket, &PROXY_HANDLER, OP_READ, key->data); // Comparto el contexto
 }
 
 // BUFFER REMOTO --> SOCKET CLIENTE
@@ -172,6 +168,12 @@ void proxy_handler_read(struct selector_key *key) {
 // Ojo: NO USAR key->fd, para no asumir qué socket es
 void proxy_handler_write(struct selector_key *key) {
     ClientData *proxyData = key->data;
+
+    if (proxyData->server_is_connecting) {
+        selector_set_interest(key->s, proxyData->client_fd, OP_WRITE);
+        return;
+    }
+
     size_t readable;
     uint8_t *read_ptr = buffer_read_ptr(&proxyData->client_buffer, &readable);
     ssize_t bytesWritten = sendBytesWithMetrics(proxyData->outgoing_fd, read_ptr, readable, 0);

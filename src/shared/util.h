@@ -86,6 +86,7 @@ typedef struct ClientData {
 
     int client_closed; // Indica si el cliente ha cerrado la conexión
     int outgoing_closed; // Indica si el socket remoto ha cerrado la conexión
+    int server_is_connecting;
     union {
         socks5_initial_parserinfo initialParserInfo;
         socks5_login_parserinfo loginParserInfo;
