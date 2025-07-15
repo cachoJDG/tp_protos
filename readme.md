@@ -80,7 +80,7 @@ Detallado en ```docs/informe.pdf```
 
 NOTA: El cliente envía datos al puerto de monitoreo utilizando la sesión que se encuentra en la variable de entorno ```MONITORING_TOKEN``` (con la sintaxis ```usuario:contraseña```)
 
-**Uso:** ./bin/client \<puerto> \<comando> [args...]
+**Uso:** ./bin/client -p \<puerto> -c \<comando>
 
 **Comandos con argumentos:**
 ```
@@ -93,8 +93,6 @@ NOTA: El cliente envía datos al puerto de monitoreo utilizando la sesión que s
 ```
 
 ### Ejemplos de ejecución
-
-NOTA: Ver informe (```docs/informe.pdf```) para más información sobre pruebas de ejecución
 
 - Llamar funciones del cliente
 

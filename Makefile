@@ -43,7 +43,7 @@ obj/%.o: src/%.c
 clean:
 	rm -rf $(OUTPUT_FOLDER)
 	rm -rf $(OBJECTS_FOLDER)
-	rm tp_protos.log
+	rm -f tp_protos.log
 
 check:
 	mkdir -p check
