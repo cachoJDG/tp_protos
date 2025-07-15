@@ -3,5 +3,6 @@
 
 .idea
 wireshark_captures.pcapng
+tp_protos.log
 
 .vscode

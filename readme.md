@@ -72,7 +72,7 @@ python3 src/python_tests/socks5_combined.py
 
 ## Protocolo de monitoreo
 
-Detallado en ./docs/informe.pdf
+Detallado en docs/informe.pdf
 
 ## Cliente de monitoreo
 
@@ -139,18 +139,3 @@ NOTA: el usuario debe estar en la lista de usuarios (Ver paso anterior). Este se
 ```
 ./bin/client 2022 GET METRICS
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

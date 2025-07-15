@@ -92,6 +92,7 @@ int main(int argc, char *argv[]) {
     setvbuf(stderr, NULL, _IONBF, 0);
     close(STDIN_FILENO);
     setLogLevel(INFO);
+    setLogFile("tp_protos.log");
 
     static struct socks5args args = {0};
     parse_args(argc, argv, &args);

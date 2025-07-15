@@ -2,6 +2,7 @@
 
 LOG_LEVEL current_level = DEBUG;
 
+FILE *log_file = NULL;
 
 void setLogLevel(LOG_LEVEL newLevel) {
 	if ( newLevel >= DEBUG && newLevel <= FATAL )
@@ -18,4 +19,26 @@ char * levelDescription(LOG_LEVEL level) {
     if (level < DEBUG || level > FATAL)
         return "";
     return description[level];
+}
+
+char * levelDescriptionPlain(LOG_LEVEL level) {
+    static char *description[] = {
+        "DEBUG",
+        "INFO",
+        "ERROR",
+        "FATAL"
+    };
+    if (level < DEBUG || level > FATAL)
+        return "";
+    return description[level];
+}
+
+void setLogFile(const char *filename) {
+    if (log_file != NULL && log_file != stderr) {
+        fclose(log_file);
+    }
+    log_file = fopen(filename, "a");
+    if (log_file == NULL) {
+        log_file = stderr;
+    }
 }
