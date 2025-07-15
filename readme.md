@@ -41,7 +41,7 @@ NOTA: Es recomendable limpiar el directorio con ```make clean``` antes de volver
 
 NOTA: El servidor abre 2 puertos: uno para el proxy SOCKS5 y otro para el monitoreo.
 
-**Uso:** ./bin/socks5v [opciones...]
+**Uso:** ./bin/socks5d [opciones...]
 
 **Opciones:**
 
@@ -120,10 +120,10 @@ python3 src/python_tests/monitoring_combined.py
 make all
 ```
 
-2. Ejecución del proxy socks5v (en una terminal aparte)
+2. Ejecución del proxy socks5d (en una terminal aparte)
 
 ```
-./bin/socks5v -p 2021 -P 2022 -u john:doe
+./bin/socks5d -p 2021 -P 2022 -u john:doe
 ```
 
 3. Exportar token de monitoreo
