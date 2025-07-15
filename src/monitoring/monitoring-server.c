@@ -10,10 +10,6 @@
 #include "monitoring-server.h"
 #include "monitoringServerUtils.h"
 
-#define MAXPENDING 5
-#define MAX_ADDR_BUFFER_MONITORING 128
-#define SELECTOR_CAPACITY 256
-
 struct sockaddr_storage _localAddr;
 
 // Helper function for debugging, as buffer_readable_bytes is not in buffer.h

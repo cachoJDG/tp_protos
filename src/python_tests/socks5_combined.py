@@ -1,7 +1,6 @@
 import socket
 import time
 
-# TODO: delete
 
 def main():
     # SOCKS5 proxy details

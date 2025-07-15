@@ -153,7 +153,6 @@ parser_ret req_command_addrtype(struct buffer *buffer, socks5_request_parserinfo
 }
 
 parser_ret req_ipv4(struct buffer *buffer, socks5_request_parserinfo* parserInfo, ssize_t *toRead) {
-    // TODO: terminar esto después de PAW
     struct in_addr rawAddress;
     buffer_read_bytes(buffer, (uint8_t*)&rawAddress, sizeof(rawAddress));
     // parserInfo->ipv4 = ntohl(rawAddress);

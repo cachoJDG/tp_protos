@@ -135,7 +135,8 @@ void stm_initial_read_arrival(unsigned state, struct selector_key *key) {
     buffer_reset(&clientData->client_buffer);
 }
 
-// TODO: mover a utils.c
+// ---------- Funciones Auxiliares ---------- (TODO: mover a otro lado)
+
 // Esto asegura de que SOLAMENTE se haga recv de lo que se pueda recibir
 // y que no se intente leer más de lo que el buffer puede contener.
 ssize_t recv_ToBuffer_WithMetrics(int fd, buffer *buffer, ssize_t toRead) {
@@ -212,12 +213,12 @@ StateSocksv5 write_everything(struct selector_key *key, StateSocksv5 currentStat
     return nextState;
 }
 
+// ---------- Fin de: Funciones Auxiliares ----------
 
 StateSocksv5 stm_initial_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     socks5_initial_parserinfo* parserInfo = &clientData->initialParserInfo;
 
-    // Obs: si toRead fuese más fácil de acceder, todo el paso 1 se podría ser directamente en client_handler_read.
     // 1. Guardo datos en el buffer (sin que se lean bytes de más)
     ssize_t bytesRead = recv_ToBuffer_WithMetrics(key->fd, &clientData->client_buffer, clientData->toRead);
 
@@ -422,6 +423,9 @@ void client_handler_read(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_read(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
+        if(clientData->outgoing_fd != -1) {
+            selector_unregister_fd(key->s, clientData->outgoing_fd);
+        }
         selector_unregister_fd(key->s, key->fd);
     }
 }
@@ -430,6 +434,9 @@ void client_handler_write(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_write(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
+        if(clientData->outgoing_fd != -1) {
+            selector_unregister_fd(key->s, clientData->outgoing_fd);
+        }
         selector_unregister_fd(key->s, key->fd);
     }
 }
@@ -437,6 +444,9 @@ void client_handler_block(struct selector_key *key) {
     ClientData *clientData = key->data;
     StateSocksv5 state = stm_handler_block(&clientData->stm, key);
     if(state == STM_ERROR || state == STM_DONE) {
+        if(clientData->outgoing_fd != -1) {
+            selector_unregister_fd(key->s, clientData->outgoing_fd);
+        }
         selector_unregister_fd(key->s, key->fd);
     }
 }
@@ -457,6 +467,5 @@ void client_handler_close(struct selector_key *key) {
 StateSocksv5 error_redirect(struct selector_key *key) {
     ClientData *clientData = key->data;
     log(ERROR, "error_redirect called for socket %d, state=%d", key->fd, clientData->stm.current->state);
-    
     return STM_ERROR;
 }

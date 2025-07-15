@@ -35,6 +35,8 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     if (bytesWritten <= 0) {
         if (bytesWritten == 0) {
             log(ERROR, "[CLIENT] Error writing to socket %d: Unknown Error", clientData->client_fd);
+            selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
+            selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
             return STM_DONE;
         }
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -45,6 +47,8 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
         }
         log(ERROR, "[CLIENT] Error writing to socket %d: %s", clientData->client_fd, strerror(errno));
         errno = 0;
+        selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
+        selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
         return STM_DONE;
     }
 
@@ -53,6 +57,7 @@ unsigned stm_connection_traffic_write(struct selector_key *key) {
     if (!buffer_can_read(&clientData->outgoing_buffer) && clientData->outgoing_closed) {
         // Si no hay datos para escribir y el socket remoto está cerrado, dejo de escuchar
         selector_set_interest(key->s, clientData->client_fd, OP_NOOP);
+        selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
         log(DEBUG, "No more data to write to client %d, closing connection", clientData->client_fd);
         return STM_DONE;
     }
@@ -99,6 +104,8 @@ unsigned stm_connection_traffic_read(struct selector_key *key) {
         }
         log(ERROR, "[CLIENT] Error reading from socket %d: %s", key->fd, strerror(errno));
         errno = 0;
+        selector_set_interest(key->s, key->fd, OP_NOOP);
+        selector_set_interest(key->s, clientData->outgoing_fd, OP_NOOP);
         return STM_DONE;
     }
 
@@ -134,7 +141,6 @@ void proxy_handler_read(struct selector_key *key) {
             // 3. SOCKET REMOTO --> BUFFER REMOTO
             // Dejo:
             // 1. BUFFER REMOTO --> SOCKET CLIENTE [Si hay para escribir]
-            // TODO: cerrar conexión si no hay nada para escribir (debería agregar un flag de server_closed)
             if (buffer_can_read(&proxyData->outgoing_buffer)) {
                selector_set_interest(key->s, proxyData->client_fd, OP_WRITE);
             } else {
@@ -151,7 +157,7 @@ void proxy_handler_read(struct selector_key *key) {
         }
         log(ERROR, "[SERVER] Error reading from socket %d: %s", key->fd, strerror(errno));
         selector_unregister_fd(key->s, key->fd);
-        // TODO: avisarle al cliente que se cerró la conexión
+        proxyData->outgoing_fd = -1; // Reset outgoing_fd to indicate no active connection
         return;
     }
 
@@ -161,6 +167,7 @@ void proxy_handler_read(struct selector_key *key) {
     unsigned state = stm_connection_traffic_write(key); // Ahorra un Select
     if (state == STM_ERROR || state == STM_DONE) {
         selector_unregister_fd(key->s, proxyData->outgoing_fd);
+        proxyData->outgoing_fd = -1;
     }
 }
 
@@ -188,7 +195,7 @@ void proxy_handler_write(struct selector_key *key) {
         }
         log(ERROR, "[SERVER] Error writing to socket %d: %s", proxyData->outgoing_fd, strerror(errno));
         selector_unregister_fd(key->s, proxyData->outgoing_fd);
-
+        proxyData->outgoing_fd = -1;
         return;
     }
     buffer_read_adv(&proxyData->client_buffer, bytesWritten);

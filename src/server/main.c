@@ -17,7 +17,7 @@
 #include "../args.h"
 
 #define MAXPENDING 32 // Maximum outstanding connection requests
-#define SELECTOR_CAPACITY 1024
+#define SELECTOR_CAPACITY_PROXY 1024
 
 #define ADMIN 1
 #define USER 0
@@ -136,7 +136,7 @@ int main(int argc, char *argv[]) {
         .select_timeout = { .tv_sec = 10, .tv_nsec = 0 }
     };
     selector_init(&conf);
-    fd_selector selector = selector_new(SELECTOR_CAPACITY);
+    fd_selector selector = selector_new(SELECTOR_CAPACITY_PROXY);
 
     static const fd_handler listen_handler = {
         .handle_read  = handle_read_passive,

@@ -2,7 +2,6 @@ import socket
 import time
 import sys
 
-# TODO: delete
 
 def send_fragmented(sock, data, fragment_size=1, delay=0.1):
     """Send data in tiny fragments with delays between each send."""
