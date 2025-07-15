@@ -29,42 +29,8 @@ typedef enum RequestStatus {
     REQUEST_COMMAND_NOT_SUPPORTED = 0x08,
 } RequestStatus;
 
-// todo pasar este struct y esta funcion al dns_resolver de alguna manera
-typedef struct {
-    char host[MAX_ADDR_BUFFER];
-    char service[8];
-    struct addrinfo **result;  // aca guardamos la lista devuelta
-    fd_selector     selector;
-    int             client_fd;
-} DnsJob;
 
 StateSocksv5 beginConnection(struct selector_key *key);
-
-void *dns_thread_func(void *arg) {
-    DnsJob *job = (DnsJob *)arg;
-    if (dns_solve_addr(job->host, job->service, job->result) == 0) {
-        struct addrinfo *p;
-        char ipstr[INET6_ADDRSTRLEN];
-
-        for (p = *job->result; p != NULL; p = p->ai_next) {
-            void *addr;
-            if (p->ai_family == AF_INET) {
-                addr = &((struct sockaddr_in *)p->ai_addr)->sin_addr;
-            } else {  // AF_INET6
-                addr = &((struct sockaddr_in6 *)p->ai_addr)->sin6_addr;
-            }
-            inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
-            log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
-        }
-
-    } else {
-        log(DEBUG, "Error al resolver DNS para %s:%s", job->host, job->service);
-        job->result = NULL;
-    }
-    selector_notify_block(job->selector, job->client_fd);
-    free(job);
-    return NULL;
-}
 
 static RequestStatus errnoToRequestStatus(int err) {
     switch (err)
@@ -118,7 +84,7 @@ StateSocksv5 stm_request_read(struct selector_key *key) {
         case PARSER_OK:
             break; // Termino el parsing
         case PARSER_INCOMPLETE:
-            return STM_REQUEST_READ; // No se recibieron todos los bytes necesarios
+            return STM_REQUEST_READ; // No se recibieron tod0s los bytes necesarios
         case PARSER_ERROR:
             // log(ERROR, "Error parsing request data");
             return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
@@ -261,7 +227,7 @@ StateSocksv5 beginConnection(struct selector_key *key) {
         }
     }
 
-    return prepare_error(key, "\x05\x04\x00\x00\x00\x00\x00\x00\x00", 10);
+    return prepare_error(key, "\x05\x01\x00\x00\x00\x00\x00\x00\x00", 10);
 }
 
 StateSocksv5 stm_request_write(struct selector_key *key) {
@@ -296,18 +262,18 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         log(DEBUG, "Remote socket bound at %s", addrBuffer);
     } else {
         selector_unregister_fd(key->s, clientData->outgoing_fd);
-        return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
     int err = 0;
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &(socklen_t){sizeof(int)})) {
         log(DEBUG, "connect attempt error %d", key->fd);
         selector_unregister_fd(key->s, clientData->outgoing_fd);
-        return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
     if(err) {
         log(DEBUG, "connect attempt error %d err=%d", key->fd, err);
-        char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";
+        char errorRes[] = "\x05\x01\x00\x01\x00\x00\x00\x00\x00";
         errorRes[1] = errnoToRequestStatus(err);
         selector_unregister_fd(key->s, clientData->outgoing_fd);
         return prepare_error(key, errorRes, 10);
@@ -341,7 +307,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         default:
             // We don't know the address type? sendBytesWithMetrics IPv4 0.0.0.0:0.
             selector_unregister_fd(key->s, clientData->outgoing_fd);
-            return prepare_error(key, "\x01\x00\x00\x01\x00\x00\x00", 7);
+            return prepare_error(key, "\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00", 10);
     }
     clientData->outgoing_fd = sock;
     struct addrinfo *addr = clientData->connectAddresses; 

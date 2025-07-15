@@ -33,4 +33,30 @@ int dns_solve_addr(const char *host, const char *service, struct addrinfo **out_
     return 0;
 }
 
+void *dns_thread_func(void *arg) {
+    DnsJob *job = (DnsJob *)arg;
+    if (dns_solve_addr(job->host, job->service, job->result) == 0) {
+        struct addrinfo *p;
+        char ipstr[INET6_ADDRSTRLEN];
+
+        for (p = *job->result; p != NULL; p = p->ai_next) {
+            void *addr;
+            if (p->ai_family == AF_INET) {
+                addr = &((struct sockaddr_in *)p->ai_addr)->sin_addr;
+            } else {  // AF_INET6
+                addr = &((struct sockaddr_in6 *)p->ai_addr)->sin6_addr;
+            }
+            inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
+            log(DEBUG, "DNS resuelto para %s:%s -> %s", job->host, job->service, ipstr);
+        }
+
+    } else {
+        log(DEBUG, "Error al resolver DNS para %s:%s", job->host, job->service);
+        job->result = NULL;
+    }
+    selector_notify_block(job->selector, job->client_fd);
+    free(job);
+    return NULL;
+}
+
 
