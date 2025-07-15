@@ -4,6 +4,7 @@
 #include "sockUtils.h"
 #include "../users/users.h"
 #include "initialParser.h"
+#include "../monitoring/monitoringMetrics.h"
 
 fd_handler CLIENT_HANDLER = {
     .handle_read = client_handler_read,
@@ -114,6 +115,8 @@ void handle_read_passive(struct selector_key *key) {
     if(clientSocket == -1) {
         return;
     }
+
+    metrics_increment_connections();
 
     ClientData *clientData = calloc(1, sizeof(ClientData)); 
     

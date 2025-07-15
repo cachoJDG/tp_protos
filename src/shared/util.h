@@ -19,7 +19,7 @@
 #include "../buffer.h"
 
 #define BUFSIZE (32768) /* 32 KB */
-#define MAX_ADDR_BUFFER (64)
+#define MAX_ADDR_BUFFER (256)
 #define NAME_MAX_LENGTH (256) /* si no ponemos 256, entonces stackbufferoverflow */
 #define SOCKS_LOGIN_VERSION (1)
 

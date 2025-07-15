@@ -317,7 +317,6 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     else {
         log(INFO, "[%d] NO-AUTH Successfully connected to: %s (%s %s) %s %s", key->fd, printFamily(addr), printType(addr), printProtocol(addr), addr->ai_canonname ? addr->ai_canonname : "-", printAddressPort(addr, addrBuffer));
     }
-    metrics_increment_connections();
 
     selector_set_interest_key(key, OP_WRITE);
     return STM_REQUEST_WRITE;
