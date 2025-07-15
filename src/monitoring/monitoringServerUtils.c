@@ -195,7 +195,7 @@ int handle_remove_user_command(uint8_t *buffer, ssize_t bytes, char *response, s
     }
 
     if (get_user_role(usernameToRemove)==ADMIN && getAdminCount() == 1) {
-        char *err = "Error: No se puede eliminar a %s porque es el último admin\n";
+        char *err = "Error: can't delete %s because is the last admin\n";
         uint16_t len = strlen(err) + strlen(usernameToRemove) - 2;
         write_length_to_response(response, len);
         snprintf(response + 2, response_size - 2, err, usernameToRemove);
@@ -377,7 +377,7 @@ int handle_change_role_command(uint8_t *buffer, ssize_t bytes, char *response, s
 
     if (newRole == 0 && get_user_role(usernameToChange)==ADMIN && getAdminCount() == 1) 
     {
-        char *err = "Error: No se puede demotar a %s porque es el último admin\n";
+        char *err = "Error: Cannot demote %s as they are the last admin\n";
         uint16_t len = strlen(err) + strlen(usernameToChange) - 2;
         write_length_to_response(response, len);
         snprintf(response + 2, response_size - 2, err, usernameToChange);
