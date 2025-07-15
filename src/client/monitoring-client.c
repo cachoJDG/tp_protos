@@ -61,7 +61,6 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		if(sendAddUserCommand(clientSocket ,commands) == -1){
 			fprintf(stderr, "Error sending ADD USER command\n");
 			close(clientSocket);
-			free(commands);
 			exit(1);
 		}
 	}
@@ -69,7 +68,6 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		if(sendRemoveUserCommand(clientSocket ,commands) == -1){
 			fprintf(stderr, "Error sending REMOVE USER command\n");
 			close(clientSocket);
-			free(commands);
 			exit(1);
 		}
 	}
@@ -77,7 +75,6 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		if(sendChangePasswordCommand(clientSocket ,commands) == -1){
 			fprintf(stderr, "Error sending CHANGE PASSWORD command\n");
 			close(clientSocket);
-			free(commands);
 			exit(1);
 		}
 	}
@@ -88,14 +85,12 @@ void sendCommand(int clientSocket, char ** commands, int commandCount) {
 		if(sendChangeRoleCommand(clientSocket ,commands) == -1){
 			fprintf(stderr, "Error sending CHANGE ROLE command\n");
 			close(clientSocket);
-			free(commands);
 			exit(1);
 		}
 	}
 	else {
 		fprintf(stderr, "Unknown command\nSome examples:\nLIST USERS\nADD USER <username> <password>\nREMOVE USER <username>\nCHANGE PASSWORD <username> <newpassword>\nCHANGE ROLE <username> <role>\nGET METRICS\n");
 		close(clientSocket);
-		free(commands);
 		exit(1);
 	}
 }
@@ -105,7 +100,7 @@ bool authClient(int clientSocket) {
 	char* token = getenv("MONITORING_TOKEN");
 	if (token == NULL) {
 		fprintf(stderr, "No token provided for connection\n");
-		return -1;
+		return false; 
 	}
 	
 	char *clientName = strtok(token, ":");
@@ -193,21 +188,42 @@ void readServerResponse(int clientSocket) {
 }
 
 int main(int argc, char *argv[]) {
+    char *port = NULL;
+    char **commands = NULL;
+    int commandCount = 0;
+    bool found_c_flag = false;
 
-	if (argc < 3) {
-        fprintf(stderr, "Usage: %s <port> <command> [args...]\n", argv[0]);
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-p") == 0) {
+            if (i + 1 < argc) {
+                port = argv[++i]; 
+            } else {
+                fprintf(stderr, "Error: -p requires a port number.\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-c") == 0) {
+            found_c_flag = true;
+            
+            commands = &argv[i + 1];
+            commandCount = argc - (i + 1);
+            break; 
+        } else {
+            
+            fprintf(stderr, "Error: Unexpected argument '%s'. Expected -p or -c.\n", argv[i]);
+            return 1;
+        }
+    }
+
+    if (port == NULL || !found_c_flag || commandCount == 0) {
+        fprintf(stderr, "Usage: %s -p <port> -c <command> [args...]\n", argv[0]);
         fprintf(stderr, "Examples:\n");
-        fprintf(stderr, "  %s 2020 LIST USERS\n", argv[0]);
-        fprintf(stderr, "  %s 2020 ADD USER username password\n", argv[0]);
+        fprintf(stderr, "  %s -p 2020 -c LIST USERS\n", argv[0]);
+        fprintf(stderr, "  %s -p 2020 -c ADD USER username password\n", argv[0]);
         return 1;
     }
 	
 	char *server = LOCALHOST; 
 
-	// Second arg server port
-	char *port = argv[1];
-
-	// Create a reliable, stream socket using TCP
 	int clientSocket = tcpClientSocket(server, port);
 	if (clientSocket < 0) {
 		log(FATAL, "socket() failed %d", clientSocket);
@@ -218,27 +234,10 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "user auth failed\n");
 		return 1;
 	}
-	int commandCount = argc - 2;
-    char **commands = malloc(commandCount * sizeof(char*));
-    if (commands == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
-        close(clientSocket);
-        return 1;
-    }
-
-	for (int i = 0; i < commandCount; i++) {
-        commands[i] = NULL;
-    }
-
-    for (int i = 2; i < argc; i++) {
-        commands[i - 2] = argv[i];
-    }
-
-	sendCommand(clientSocket ,commands, argc - 2);
+	sendCommand(clientSocket ,commands, commandCount);
 
 	readServerResponse(clientSocket);
 
 	close(clientSocket);
-	free(commands);
 	return 0;
 }
