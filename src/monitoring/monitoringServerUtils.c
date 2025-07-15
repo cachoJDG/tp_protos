@@ -17,6 +17,37 @@ int count_digits(size_t num) {
     return count;
 }
 
+static size_t getAdminCount(void) {
+    size_t count = 0;
+    char *all = getUsers();
+    if (!all) return 0;
+
+    // Duplicamos el buffer para poder usar strtok sin modificar el original
+    size_t slen = strlen(all) + 1;
+    char *dup = malloc(slen);
+    if (!dup) {
+        return 0;
+    }
+    memcpy(dup, all, slen);
+
+    // Iteramos línea a línea
+    char *tok = strtok(dup, "\n");
+    while (tok) {
+        // Saltar líneas vacías y cabecera
+        if (*tok != '\0' && strncmp(tok, "Registered users:", 17) != 0) {
+            if (get_user_role(tok) == ADMIN) {
+                count++;
+            }
+        }
+        tok = strtok(NULL, "\n");
+    }
+
+    free(dup);
+    return count;
+}
+
+
+
 // Función auxiliar para escribir la longitud en 2 bytes (network byte order)
 void write_length_to_response(char *response, uint16_t length) {
     uint16_t length_net = htons(length);  // Host to Network Short
@@ -159,6 +190,15 @@ int handle_remove_user_command(uint8_t *buffer, ssize_t bytes, char *response, s
         uint16_t length = strlen(error_msg) + strlen(usernameToRemove) - 2;
         write_length_to_response(response, length);
         snprintf(response + 2, response_size - 2, error_msg, usernameToRemove);
+        free(usernameToRemove);
+        return -1;
+    }
+
+    if (get_user_role(usernameToRemove)==ADMIN && getAdminCount() == 1) {
+        char *err = "Error: No se puede eliminar a %s porque es el último admin\n";
+        uint16_t len = strlen(err) + strlen(usernameToRemove) - 2;
+        write_length_to_response(response, len);
+        snprintf(response + 2, response_size - 2, err, usernameToRemove);
         free(usernameToRemove);
         return -1;
     }
@@ -331,6 +371,16 @@ int handle_change_role_command(uint8_t *buffer, ssize_t bytes, char *response, s
         uint16_t length = strlen(error_msg);
         write_length_to_response(response, length);
         snprintf(response + 2, response_size - 2, "%s", error_msg);
+        free(usernameToChange);
+        return -1;
+    }
+
+    if (newRole == 0 && get_user_role(usernameToChange)==ADMIN && getAdminCount() == 1) 
+    {
+        char *err = "Error: No se puede demotar a %s porque es el último admin\n";
+        uint16_t len = strlen(err) + strlen(usernameToChange) - 2;
+        write_length_to_response(response, len);
+        snprintf(response + 2, response_size - 2, err, usernameToChange);
         free(usernameToChange);
         return -1;
     }
