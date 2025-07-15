@@ -35,6 +35,8 @@
 make all
 ```
 
+NOTA: Es recomendable limpiar el directorio con ```make clean``` antes de volver a compilar el proyecto
+
 ## Ejecución del servidor
 
 NOTA: El servidor abre 2 puertos: uno para el proxy SOCKS5 y otro para el monitoreo.
@@ -51,9 +53,9 @@ NOTA: El servidor abre 2 puertos: uno para el proxy SOCKS5 y otro para el monito
     -u <name>:<pass> Usuario y contraseña de usuario que puede usar el proxy. Hasta 10.
     -v               Imprime información sobre la versión versión y termina. 
 
-### Ejemplos de ejecución (proxy SOCKS5)
+### Ejemplos de ejecución
 
-NOTA: Ver informe para más información sobre pruebas de ejecución
+NOTA: Ver informe (```docs/informe.pdf```) para más información sobre pruebas de ejecución
 
 - **pedido HTTP con usuario y contraseña**
 ```
@@ -72,7 +74,7 @@ python3 src/python_tests/socks5_combined.py
 
 ## Protocolo de monitoreo
 
-Detallado en docs/informe.pdf
+Detallado en ```docs/informe.pdf```
 
 ## Cliente de monitoreo
 
@@ -91,6 +93,8 @@ NOTA: El cliente envía datos al puerto de monitoreo utilizando la sesión que s
 ```
 
 ### Ejemplos de ejecución
+
+NOTA: Ver informe (```docs/informe.pdf```) para más información sobre pruebas de ejecución
 
 - Llamar funciones del cliente
 
