@@ -307,7 +307,7 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
     }
 
     if(err) {
-        log(INFO, "connect attempt error %d err=%d", key->fd, err);
+        log(DEBUG, "connect attempt error %d err=%d", key->fd, err);
         char errorRes[] = "\x05\x01\x00\x01\x00\x00\x00\x00\x00";
         errorRes[1] = errnoToRequestStatus(err);
         selector_unregister_fd(key->s, clientData->outgoing_fd);
