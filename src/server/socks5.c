@@ -115,9 +115,12 @@ void handle_read_passive(struct selector_key *key) {
     if(clientSocket == -1) {
         return;
     }
-
-    metrics_increment_connections();
-
+    if(clientSocket >= SELECTOR_CAPACITY_PROXY) {
+        log(DEBUG, "se rechazo al cliente con fd=%d", clientSocket);
+        close(clientSocket);
+        return;
+    }
+    
     ClientData *clientData = calloc(1, sizeof(ClientData)); 
     
     clientData->stm.initial = STM_INITIAL_READ;
@@ -128,8 +131,14 @@ void handle_read_passive(struct selector_key *key) {
     stm_init(&clientData->stm);
     buffer_init(&clientData->client_buffer, BUFSIZE, clientData->clientBufferData);
     buffer_init(&clientData->outgoing_buffer, BUFSIZE, clientData->remoteBufferData);
-
-    selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData);
+    
+    if(selector_register(key->s, clientSocket, &CLIENT_HANDLER, OP_READ, (void *)clientData)) {
+        log(DEBUG, "selector register failed: se rechazo al cliente con fd=%d", clientSocket);
+        free(clientData);
+        close(clientSocket);
+        return;
+    }
+    metrics_increment_connections();
 }
 
 void stm_initial_read_arrival(unsigned state, struct selector_key *key) {

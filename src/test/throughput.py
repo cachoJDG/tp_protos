@@ -7,8 +7,8 @@ from queue import Queue
 # Config
 PROXY_URL = "socks5h://localhost:1024"
 TARGET_URL = "http://localhost:80"
-NUM_USERS = 256
-REQUESTS_PER_USER = 2
+NUM_USERS = 1024
+REQUESTS_PER_USER = 1
 
 proxy = {
     "http": PROXY_URL,

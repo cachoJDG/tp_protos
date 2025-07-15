@@ -16,11 +16,7 @@
 #include "../monitoring/monitoringMetrics.h"
 #include "../args.h"
 
-#define MAXPENDING 32 // Maximum outstanding connection requests
-#define SELECTOR_CAPACITY_PROXY 1024
-
-#define ADMIN 1
-#define USER 0
+#define MAXPENDING 16 /* Maximum outstanding connection requests */ 
 
 static bool keepRunning = true;
 

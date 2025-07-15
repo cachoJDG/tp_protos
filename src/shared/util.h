@@ -12,12 +12,12 @@
 #include <string.h>
 #include "../shared/logger.h"
 #include "../selector.h"
-#include "../parser.h"
 #include <signal.h>
 #include "../stm.h"
 #include <pthread.h>
 #include "../buffer.h"
 
+#define SELECTOR_CAPACITY_PROXY 1024
 #define BUFSIZE (32768) /* 32 KB */
 #define MAX_ADDR_BUFFER (256)
 #define NAME_MAX_LENGTH (256) /* si no ponemos 256, entonces stackbufferoverflow */
