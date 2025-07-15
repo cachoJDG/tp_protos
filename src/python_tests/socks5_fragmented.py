@@ -14,7 +14,7 @@ def send_fragmented(sock, data, fragment_size=1, delay=0.1):
 def main():
     # SOCKS5 proxy details
     proxy_host = "127.0.0.1"
-    proxy_port = 2021
+    proxy_port = 1080
     username = b"john_doe"
     password = b"1234"
     target_host = "example.org"
