@@ -296,18 +296,19 @@ StateSocksv5 stm_connect_attempt_write(struct selector_key *key) {
         log(DEBUG, "Remote socket bound at %s", addrBuffer);
     } else {
         selector_unregister_fd(key->s, clientData->outgoing_fd);
-        return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
+        // TODO: ojo que hay muchos errores que son copy+paste y no devuelven lo que deberían (ej: este)
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
     int err = 0;
     if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &(socklen_t){sizeof(int)})) {
         log(DEBUG, "connect attempt error %d", key->fd);
         selector_unregister_fd(key->s, clientData->outgoing_fd);
-        return prepare_error(key, "\x05\x04\x00\x01\x00\x00\x00\x00\x00", 10);
+        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
     }
 
     if(err) {
-        log(DEBUG, "connect attempt error %d err=%d", key->fd, err);
-        char errorRes[] = "\x05\x04\x00\x01\x00\x00\x00\x00\x00";
+        log(INFO, "connect attempt error %d err=%d", key->fd, err);
+        char errorRes[] = "\x05\x01\x00\x01\x00\x00\x00\x00\x00";
         errorRes[1] = errnoToRequestStatus(err);
         selector_unregister_fd(key->s, clientData->outgoing_fd);
         return prepare_error(key, errorRes, 10);

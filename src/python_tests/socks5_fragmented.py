@@ -15,7 +15,7 @@ def send_fragmented(sock, data, fragment_size=1, delay=0.1):
 def main():
     # SOCKS5 proxy details
     proxy_host = "127.0.0.1"
-    proxy_port = 2040
+    proxy_port = 2021
     username = b"john_doe"
     password = b"1234"
     target_host = "example.org"
@@ -49,7 +49,7 @@ def main():
     # 3. Connection request - FRAGMENTED
     print("\n[Step 3] Sending connection request (FRAGMENTED)...")
     # Format: ver(1) + cmd(1) + rsv(1) + atyp(1) + dst.addr(var) + dst.port(2)
-    conn_request = b"\x05\x01\x00\x03" + bytes([len(target_host)]) + target_host.encode() + target_port.to_bytes(2, 'big')
+    conn_request = b"\x05\x01\x00\x03\x00" + bytes([len(target_host)]) + target_host.encode() + target_port.to_bytes(2, 'big')
     send_fragmented(s, conn_request, fragment_size=1, delay=0.2)
     
     # Receive connection response

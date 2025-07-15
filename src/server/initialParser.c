@@ -146,7 +146,8 @@ parser_ret req_command_addrtype(struct buffer *buffer, socks5_request_parserinfo
             break;
         default:
             log(DEBUG, "Invalid address type %d", parserInfo->addressType);
-            return PARSER_ERROR; // Invalid address type
+            *toRead = 0;
+            return PARSER_OK; // Invalid address type
     }
     return PARSER_INCOMPLETE;
 }
