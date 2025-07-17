@@ -97,6 +97,11 @@ int main(int argc, char *argv[]) {
     static struct socks5args args = {0};
     parse_args(argc, argv, &args);
 
+    if (args.users_n < 1) {
+        log(FATAL, "At least one user must be specified for administration (users = %d)", args.users_n);
+        return 1;
+    }
+
     add_admin(args.users[0].name, args.users[0].pass);
 
     for(int i = 1; i < args.users_n; i++) {
