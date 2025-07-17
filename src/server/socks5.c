@@ -66,7 +66,7 @@ static const struct state_definition CLIENT_STATE_TABLE[] = {
         .on_write_ready = stm_connection_traffic_write,
         .on_read_ready = stm_connection_traffic_read,
         .on_departure = stm_connection_traffic_departure,
-        .on_block_ready = error_redirect, 
+        .on_block_ready = stm_connection, 
     },
     {
         .state = STM_ERROR_MSG_WRITE,

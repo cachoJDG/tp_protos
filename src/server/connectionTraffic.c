@@ -145,6 +145,9 @@ void proxy_handler_read(struct selector_key *key) {
                selector_set_interest(key->s, proxyData->client_fd, OP_WRITE);
             } else {
                 selector_set_interest(key->s, proxyData->client_fd, OP_NOOP);
+                selector_unregister_fd(key->s, proxyData->outgoing_fd);
+                proxyData->outgoing_closed = 1; // Indica que el socket remoto se cerró
+                return;
             }
             selector_set_interest(key->s, proxyData->outgoing_fd, OP_NOOP);
             proxyData->outgoing_closed = 1; // Indica que el socket remoto se cerró
@@ -219,6 +222,8 @@ void proxy_handler_close(struct selector_key *key) {
         log(ERROR, "proxy_handler_close called with NULL data. fd=%d", key->fd);
         return;
     }
+    ClientData *clientData = key->data;
     log(DEBUG, "Closing proxy connection for proxy %d", key->fd);
+    selector_notify_block(key->s, clientData->client_fd);
     closeSocketWithMetrics(key->fd);
 }
