@@ -355,8 +355,11 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
             break; // Termino el parsing
         case PARSER_INCOMPLETE:
             return STM_LOGIN_READ; // No se recibieron todos los bytes necesarios
-        case PARSER_ERROR:
-            return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
+        case PARSER_ERROR: {
+            char errorResponse[] = "\x01\x01";
+            errorResponse[0] = SOCKS_LOGIN_VERSION;
+            return prepare_error(key, errorResponse, 2);
+        }
     }
 
     // 3. Acciones
@@ -376,7 +379,9 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
 
     if(loginVersion != SOCKS_LOGIN_VERSION) {
         log(DEBUG, "Invalid login version %d", loginVersion);
-        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00", 10);
+        char errorResponse[] = "\x01\x01";
+        errorResponse[0] = SOCKS_LOGIN_VERSION;
+        return prepare_error(key, errorResponse, 2);
     }
 
     if(validate_login(username, password)) {
@@ -392,7 +397,7 @@ StateSocksv5 stm_login_read(struct selector_key *key) {
     buffer_reset(&clientData->outgoing_buffer);
     size_t bufferLimit = 0;
     uint8_t *response = buffer_write_ptr(&clientData->outgoing_buffer, &bufferLimit);
-    response[0] = 0x05;
+    response[0] = SOCKS_LOGIN_VERSION; 
     if(clientData->isLoggedIn) {
         response[1] = 0x00;
     } else {
@@ -410,7 +415,9 @@ StateSocksv5 stm_login_write(struct selector_key *key) {
         return write_everything(key, STM_LOGIN_WRITE, OP_READ, STM_REQUEST_READ);
     } else {
         log(DEBUG, "Log in failed %d", clientData->authMethod);
-        return prepare_error(key, "\x05\x01\x00\x01\x00\x00\x00\x00\x00", 10);
+        char errorResponse[] = "\x01\x01";
+        errorResponse[0] = SOCKS_LOGIN_VERSION;
+        return prepare_error(key, errorResponse, 2);
     }
 }
 
